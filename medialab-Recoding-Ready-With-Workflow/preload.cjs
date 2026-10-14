@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   getDefaultSaveInfo: () => ipcRenderer.invoke('get-default-save-info'),
+  getOpenWindows: () => ipcRenderer.invoke('get-open-windows'),
   chooseFolder: (format) => ipcRenderer.invoke('choose-folder', format),
   selectRegion: () => ipcRenderer.invoke('select-region'),
   startRecord: (options) => ipcRenderer.invoke('start-record', options),

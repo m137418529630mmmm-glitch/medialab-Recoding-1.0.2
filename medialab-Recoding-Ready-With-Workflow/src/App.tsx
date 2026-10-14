@@ -67,16 +67,16 @@ export default function App() {
     }
   );
   const [selectedWindowId, setSelectedWindowId] = useState<string>(
-    initialConfig?.selectedWindowId || 'chrome-dash'
+    initialConfig?.selectedWindowId || ''
   );
 
   // Quality & FPS
   const [resolution, setResolution] = useState<ResolutionOption>(
-    initialConfig?.resolution || '1080p'
+    initialConfig?.resolution || 'native'
   );
-  const [fps, setFps] = useState<FpsOption>(initialConfig?.fps || 60);
+  const [fps, setFps] = useState<FpsOption>(initialConfig?.fps || 30);
   const [sharpness, setSharpness] = useState<SharpnessMode>(
-    initialConfig?.sharpness || 'ultra'
+    initialConfig?.sharpness || 'balanced'
   );
   const [videoFormat, setVideoFormat] = useState<VideoFormat>(
     initialConfig?.videoFormat || 'mp4'

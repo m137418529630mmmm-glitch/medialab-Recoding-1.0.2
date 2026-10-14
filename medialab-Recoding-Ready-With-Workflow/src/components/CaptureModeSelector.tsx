@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Monitor,
   Crop,
@@ -27,40 +27,7 @@ interface CaptureModeSelectorProps {
   setSelectedWindowId: (id: string) => void;
 }
 
-const mockWindows: AppWindowState[] = [
-  {
-    id: 'chrome-dash',
-    title: 'Google Chrome - Dashboard',
-    appName: 'Google Chrome',
-    icon: '🌐',
-    width: 1920,
-    height: 1040,
-  },
-  {
-    id: 'vscode-main',
-    title: 'Visual Studio Code - Editor',
-    appName: 'VS Code',
-    icon: '💻',
-    width: 1600,
-    height: 900,
-  },
-  {
-    id: 'premiere-edit',
-    title: 'Adobe Premiere Pro - Timeline',
-    appName: 'Premiere Pro',
-    icon: '🎬',
-    width: 1920,
-    height: 1080,
-  },
-  {
-    id: 'terminal-core',
-    title: 'Terminal - PowerShell',
-    appName: 'Terminal',
-    icon: '⌨️',
-    width: 1280,
-    height: 720,
-  },
-];
+const fallbackWindows: AppWindowState[] = [];
 
 export const CaptureModeSelector: React.FC<CaptureModeSelectorProps> = ({
   lang,
@@ -75,6 +42,23 @@ export const CaptureModeSelector: React.FC<CaptureModeSelectorProps> = ({
   setSelectedWindowId,
 }) => {
   const t = translations[lang];
+  const [openWindows, setOpenWindows] = useState<AppWindowState[]>(fallbackWindows);
+
+  useEffect(() => {
+    let mounted = true;
+    const refresh = async () => {
+      try {
+        const api = window.electronAPI as any;
+        const items = api?.getOpenWindows ? await api.getOpenWindows() : [];
+        if (!mounted) return;
+        setOpenWindows(items || []);
+        if (items?.length && !items.some((w: AppWindowState) => w.id === selectedWindowId)) setSelectedWindowId(items[0].id);
+      } catch { if (mounted) setOpenWindows([]); }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 5000);
+    return () => { mounted = false; window.clearInterval(timer); };
+  }, [selectedWindowId, setSelectedWindowId]);
 
   const handleApplyPreset = (preset: AspectRatioPreset) => {
     setAspectPreset(preset);
@@ -100,7 +84,7 @@ export const CaptureModeSelector: React.FC<CaptureModeSelectorProps> = ({
     setRegion((prev) => ({ ...prev, height: safeH }));
   };
 
-  const selectedWin = mockWindows.find((w) => w.id === selectedWindowId) || mockWindows[0];
+  const selectedWin = openWindows.find((w) => w.id === selectedWindowId) || openWindows[0];
 
   return (
     <div className="space-y-2 w-full min-w-0">
@@ -114,7 +98,7 @@ export const CaptureModeSelector: React.FC<CaptureModeSelectorProps> = ({
             ? '2560 × 1440'
             : captureMode === 'region'
             ? `${region.width} × ${region.height}`
-            : selectedWin.appName}
+            : (selectedWin?.appName || 'No window selected')}
         </span>
       </div>
 
@@ -274,7 +258,8 @@ export const CaptureModeSelector: React.FC<CaptureModeSelectorProps> = ({
               onChange={(e) => setSelectedWindowId(e.target.value)}
               className="w-full bg-[#FFFFFF] border border-[#E5E2DC] text-[#1E1D1B] text-xs font-bold rounded-lg py-2.5 px-3 pr-8 outline-none appearance-none cursor-pointer truncate"
             >
-              {mockWindows.map((win) => (
+              {openWindows.length === 0 && <option value="">No open application windows found</option>}
+              {openWindows.map((win) => (
                 <option key={win.id} value={win.id}>
                   {win.icon} {win.title} ({win.width} × {win.height})
                 </option>
