@@ -1,0 +1,6 @@
+{
+  "name": "لوحة التحكم في تسجيل الشاشة",
+  "description": "لوحة تحكم احترافية وعصرية باللغة العربية للتحكم الشامل في تسجيل الشاشة وجودة الفيديو والترقيم التسلسلي.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

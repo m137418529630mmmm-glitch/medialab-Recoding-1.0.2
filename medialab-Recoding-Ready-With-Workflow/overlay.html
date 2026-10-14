@@ -1,0 +1,32 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;font-family:Segoe UI,Arial,sans-serif;color:#fff}
+#selection{display:none;position:absolute;inset:0;cursor:crosshair;background:#0002}
+#selectionTip{position:absolute;top:24px;left:50%;transform:translateX(-50%);padding:12px 18px;background:#181818eF;border:1px solid #D85631;border-radius:12px;font-weight:600}
+#rect{position:absolute;border:2px dashed #D85631;background:#D8563110;display:none}
+#frame{position:absolute;border:2px dashed #D85631;box-shadow:0 0 8px #D85631, inset 0 0 8px #D8563150;display:none;pointer-events:none}
+#hud{position:absolute;display:none;top:24px;left:50%;transform:translateX(-50%);align-items:center;gap:9px;background:#191919ee;border:1px solid #ffffff2b;border-radius:14px;padding:8px 10px;box-shadow:0 8px 32px #0007;pointer-events:auto;white-space:nowrap}
+#timer{font:700 14px Consolas,monospace;color:#fff;min-width:76px}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#e23d32;margin-right:7px;animation:pulse 1s infinite}
+button{border:0;border-radius:8px;padding:8px 11px;color:white;background:#333;cursor:pointer;font-weight:700}button:hover{filter:brightness(1.18)}#stop{background:#D85631}#toggle{background:#555}
+@keyframes pulse{50%{opacity:.3}}
+</style></head><body>
+<div id="selection"><div id="selectionTip">Drag to select the recording region · Esc to cancel</div><div id="rect"></div></div>
+<div id="frame"></div><div id="hud"><span class="dot"></span><span id="timer">00:00:00</span><button id="pause">Pause</button><button id="stop">Stop &amp; Save</button><button id="toggle">Hide bar</button></div>
+<script>
+const { ipcRenderer } = require('electron');
+const selection=document.getElementById('selection'), rect=document.getElementById('rect'), frame=document.getElementById('frame'), hud=document.getElementById('hud'), timer=document.getElementById('timer');
+let start=null, hidden=false, paused=false, elapsedMs=0, started=Date.now(), ticker=null;
+ipcRenderer.on('start-region-select',()=>{selection.style.display='block';rect.style.display='none';start=null;});
+selection.addEventListener('mousedown',e=>{start={x:e.screenX,y:e.screenY};rect.style.display='block';rect.style.left=e.clientX+'px';rect.style.top=e.clientY+'px';rect.style.width='0';rect.style.height='0';});
+selection.addEventListener('mousemove',e=>{if(!start)return;let x=Math.min(start.x,e.screenX),y=Math.min(start.y,e.screenY),w=Math.abs(e.screenX-start.x),h=Math.abs(e.screenY-start.y);rect.style.left=(x-window.screenX)+'px';rect.style.top=(y-window.screenY)+'px';rect.style.width=w+'px';rect.style.height=h+'px';});
+selection.addEventListener('mouseup',e=>{if(!start)return;const x=Math.min(start.x,e.screenX),y=Math.min(start.y,e.screenY);let width=Math.max(2,Math.floor(Math.abs(e.screenX-start.x)/2)*2),height=Math.max(2,Math.floor(Math.abs(e.screenY-start.y)/2)*2);selection.style.display='none';ipcRenderer.send('region-selected',{x,y,width,height});start=null;});
+window.addEventListener('keydown',e=>{if(e.key==='Escape'){selection.style.display='none';start=null;ipcRenderer.send('region-selected',{x:0,y:0,width:1920,height:1080,cancelled:true});}});
+function updateTimer(){let ms=elapsedMs+(paused?0:Date.now()-started),s=Math.floor(ms/1000);timer.textContent=[Math.floor(s/3600),Math.floor(s%3600/60),s%60].map(v=>String(v).padStart(2,'0')).join(':');}
+ipcRenderer.on('show-recording-hud',(_e,data)=>{frame.style.display='block';if(data&&data.region){const r=data.region;frame.style.left=r.x+'px';frame.style.top=r.y+'px';frame.style.width=r.width+'px';frame.style.height=r.height+'px';}else{frame.style.left='0';frame.style.top='0';frame.style.width='100vw';frame.style.height='100vh';}hud.style.display=hidden?'none':'flex';paused=false;elapsedMs=0;started=Date.now();clearInterval(ticker);ticker=setInterval(updateTimer,250);});
+ipcRenderer.on('hud-status',(_e,data)=>{paused=!!data.paused;elapsedMs=data.elapsedMs||elapsedMs;started=Date.now();document.getElementById('pause').textContent=paused?'Resume':'Pause';});
+ipcRenderer.on('hide-hud',()=>{frame.style.display='none';hud.style.display='none';clearInterval(ticker);});
+hud.addEventListener('mouseenter',()=>ipcRenderer.send('overlay-mouse-enter'));hud.addEventListener('mouseleave',()=>ipcRenderer.send('overlay-mouse-leave'));
+document.getElementById('pause').onclick=()=>ipcRenderer.send('hud-pause-resume');
+document.getElementById('stop').onclick=()=>ipcRenderer.send('hud-stop-save');
+document.getElementById('toggle').onclick=()=>{hidden=!hidden;hud.style.display=hidden?'none':'flex';};
+</script></body></html>
