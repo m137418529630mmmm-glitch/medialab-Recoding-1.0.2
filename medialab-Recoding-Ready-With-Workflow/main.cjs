@@ -127,16 +127,29 @@ $items | Sort-Object title -Unique | ConvertTo-Json -Compress
     return [];
   }
 }
+function clampRegionToPrimaryDisplay(region) {
+  const display = screen.getPrimaryDisplay();
+  const b = display.bounds;
+  const x0 = Math.max(b.x, Math.min(Math.round(Number(region.x) || 0), b.x + b.width - 2));
+  const y0 = Math.max(b.y, Math.min(Math.round(Number(region.y) || 0), b.y + b.height - 2));
+  const right = Math.max(x0 + 2, Math.min(Math.round((Number(region.x) || 0) + (Number(region.width) || 2)), b.x + b.width));
+  const bottom = Math.max(y0 + 2, Math.min(Math.round((Number(region.y) || 0) + (Number(region.height) || 2)), b.y + b.height));
+  const width = Math.max(2, Math.floor((right - x0) / 2) * 2);
+  const height = Math.max(2, Math.floor((bottom - y0) / 2) * 2);
+  return { x: x0, y: y0, width, height };
+}
+
 function buildInputArgs(opts) {
   const fps = Number([24, 30, 60].includes(Number(opts.fps)) ? opts.fps : 30);
   const args = ['-hide_banner', '-loglevel', 'warning', '-thread_queue_size', '256', '-f', 'gdigrab', '-framerate', String(fps), '-draw_mouse', opts.hideCursor ? '0' : '1'];
   if (opts.mode === 'region' && opts.region) {
-    const r = opts.region;
-    const x = Math.max(0, Math.round(Number(r.x) || 0));
-    const y = Math.max(0, Math.round(Number(r.y) || 0));
-    const w = Math.max(2, Math.floor((Number(r.width) || 2) / 2) * 2);
-    const h = Math.max(2, Math.floor((Number(r.height) || 2) / 2) * 2);
-    args.push('-offset_x', String(x), '-offset_y', String(y), '-video_size', `${w}x${h}`);
+    const r = clampRegionToPrimaryDisplay(opts.region);
+    recordingOptions.region = r;
+    const display = screen.getPrimaryDisplay().bounds;
+    // gdigrab offsets are relative to the desktop capture origin.
+    const x = Math.max(0, r.x - display.x);
+    const y = Math.max(0, r.y - display.y);
+    args.push('-offset_x', String(x), '-offset_y', String(y), '-video_size', `${r.width}x${r.height}`);
   }
   if (opts.mode === 'window' && opts.windowTitle) args.push('-i', `title=${opts.windowTitle}`);
   else args.push('-i', 'desktop');
@@ -199,6 +212,11 @@ async function stopCapture() {
     active = false;
     paused = false;
     if (overlayWin) { safeOverlaySend('hide-hud'); overlayWin.hide(); }
+    if (mainWin && !mainWin.isDestroyed()) {
+      mainWin.show();
+      mainWin.restore();
+      mainWin.focus();
+    }
     const valid = segments.filter(p => fs.existsSync(p) && fs.statSync(p).size > 2048);
     if (!valid.length) throw new Error('No valid video segment was created. Check FFmpeg and capture permissions.');
     const folder = recordingOptions.savePath || app.getPath('videos');
@@ -277,10 +295,13 @@ ipcMain.handle('start-record', async (_e, opts = {}) => {
     await startSegment();
     const win = ensureOverlay(); win.show(); win.setIgnoreMouseEvents(true, { forward: true });
     safeOverlaySend('show-recording-hud', { region: recordingOptions.mode === 'region' ? recordingOptions.region : null });
+    if (mainWin && !mainWin.isDestroyed()) mainWin.minimize();
     send('recording-status-change', { status: 'recording' });
     return { ok: true };
   } catch (e) {
     active = false; paused = false;
+    if (overlayWin && !overlayWin.isDestroyed()) { safeOverlaySend('hide-hud'); overlayWin.hide(); }
+    if (mainWin && !mainWin.isDestroyed()) { mainWin.show(); mainWin.restore(); mainWin.focus(); }
     if (ffmpeg) { try { ffmpeg.kill(); } catch {} ffmpeg = null; }
     throw e;
   }
@@ -288,7 +309,15 @@ ipcMain.handle('start-record', async (_e, opts = {}) => {
 ipcMain.handle('pause-record', () => pauseCapture());
 ipcMain.handle('resume-record', () => resumeCapture());
 ipcMain.handle('stop-save', () => stopCapture());
-ipcMain.on('region-selected', (_e, region) => ipcMain.emit('region-selected-main', null, region));
+ipcMain.on('region-selected', (_e, region) => {
+  if (region && !region.cancelled) {
+    const normalized = clampRegionToPrimaryDisplay(region);
+    send('region-updated', normalized);
+    ipcMain.emit('region-selected-main', null, normalized);
+  } else {
+    ipcMain.emit('region-selected-main', null, region || { cancelled: true });
+  }
+});
 ipcMain.on('overlay-mouse-enter', () => overlayWin && overlayWin.setIgnoreMouseEvents(false));
 ipcMain.on('overlay-mouse-leave', () => overlayWin && overlayWin.setIgnoreMouseEvents(true, { forward: true }));
 ipcMain.on('hud-pause-resume', () => (paused ? resumeCapture() : pauseCapture()).catch(e => send('recording-error', e.message)));

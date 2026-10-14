@@ -45,16 +45,7 @@
     },
     "win": {
       "icon": "public/recording_icon_transparent.ico",
-      "target": [
-        "nsis"
-      ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "medialab Recoding"
+      "target": "portable"
     }
   }
 }

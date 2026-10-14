@@ -360,7 +360,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F4F3F0] text-[#1E1D1B] flex flex-col font-sans selection:bg-[#D85631]/20 selection:text-[#D85631]">
+    <div className="min-h-screen w-full bg-[#F4F3F0] text-[#1E1D1B] flex flex-col font-sans selection:bg-[#D85631]/20 selection:text-[#D85631]">
       {/* Top Header with permanent logo & settings */}
       <Header
         lang={lang}
@@ -373,7 +373,7 @@ export default function App() {
       />
 
       {/* Main Container - Centered, strictly bounded, NO overflow */}
-      <main className="flex-1 max-w-xl w-full mx-auto px-4 py-8 space-y-6 box-border overflow-hidden">
+      <main className="flex-1 w-full max-w-4xl mx-auto px-5 sm:px-8 py-5 sm:py-6 space-y-5 box-border overflow-x-hidden">
         {/* Section 1: Capture Mode */}
         <CaptureModeSelector
           lang={lang}
