@@ -262,7 +262,8 @@ async function stopCapture() {
 }
 function createMainWindow() {
   mainWin = new BrowserWindow({
-    width: 1080, height: 850, minWidth: 760, minHeight: 650,
+    width: 780, height: 680, minWidth: 720, minHeight: 600,
+    useContentSize: true, center: true, maximizable: false,
     title: 'medialab Recoding', icon: path.join(__dirname, 'dist', 'recording_icon_transparent.ico'),
     autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false }
