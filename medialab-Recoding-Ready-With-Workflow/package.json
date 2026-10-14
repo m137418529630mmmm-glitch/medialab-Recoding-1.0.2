@@ -54,7 +54,9 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "medialab Recoding"
-    }
+      "shortcutName": "medialab Recoding",
+      "differentialPackage": false
+    },
+    "compression": "maximum"
   }
 }

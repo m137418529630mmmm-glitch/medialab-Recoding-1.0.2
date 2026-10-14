@@ -18,6 +18,20 @@ let startedAt = 0;
 let elapsedMs = 0;
 let stopPromise = null;
 const tempRoot = path.join(os.tmpdir(), `medialab-recoding-${process.pid}`);
+const preferencesPath = path.join(app.getPath('userData'), 'medialab-preferences.json');
+function readPreferences() {
+  try { return JSON.parse(fs.readFileSync(preferencesPath, 'utf8')); } catch { return {}; }
+}
+function writePreferences(patch) {
+  const current = readPreferences();
+  const next = { ...current, ...patch };
+  try {
+    fs.mkdirSync(path.dirname(preferencesPath), { recursive: true });
+    fs.writeFileSync(preferencesPath, JSON.stringify(next, null, 2), 'utf8');
+  } catch (error) { console.warn('Could not persist preferences:', error.message); }
+  return next;
+}
+
 
 function resolveFfmpeg() {
   // ffmpeg-static is a production dependency and is unpacked by electron-builder.
@@ -258,11 +272,14 @@ async function stopCapture() {
     return result;
   })();
   try { return await stopPromise; }
-  finally { stopPromise = null; }
+  catch (error) {
+    send('recording-status-change', { status: 'idle' });
+    throw error;
+  } finally { stopPromise = null; }
 }
 function createMainWindow() {
   mainWin = new BrowserWindow({
-    width: 780, height: 680, minWidth: 720, minHeight: 600,
+    width: 780, height: 620, minWidth: 720, minHeight: 560,
     useContentSize: true, center: true, maximizable: false,
     title: 'medialab Recoding', icon: path.join(__dirname, 'dist', 'recording_icon_transparent.ico'),
     autoHideMenuBar: true,
@@ -279,12 +296,21 @@ app.whenReady().then(() => {
 app.on('before-quit', () => { if (ffmpeg) { try { ffmpeg.stdin.write('q\n'); } catch {} } });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 
-ipcMain.handle('get-default-save-info', () => ({ savePath: app.getPath('videos'), currentIndex: 0 }));
+ipcMain.handle('get-default-save-info', () => {
+  const prefs = readPreferences();
+  const savePath = prefs.savePath && fs.existsSync(prefs.savePath) ? prefs.savePath : app.getPath('videos');
+  let currentIndex = 0;
+  while (fs.existsSync(path.join(savePath, `${currentIndex}.mp4`))) currentIndex++;
+  return { savePath, currentIndex, preferences: prefs };
+});
+ipcMain.handle('save-preferences', (_e, patch = {}) => writePreferences(patch));
 ipcMain.handle('get-open-windows', () => listOpenWindows());
 ipcMain.handle('choose-folder', async (_e, format = 'mp4') => {
   const result = await dialog.showOpenDialog(mainWin, { title: 'Choose recording folder', properties: ['openDirectory', 'createDirectory'] });
   if (result.canceled || !result.filePaths[0]) return null;
-  const folder = result.filePaths[0]; let index = 0;
+  const folder = result.filePaths[0];
+  writePreferences({ savePath: folder });
+  let index = 0;
   while (fs.existsSync(path.join(folder, `${index}.${format}`))) index++;
   return { savePath: folder, currentIndex: index };
 });
@@ -301,7 +327,8 @@ ipcMain.handle('start-record', async (_e, opts = {}) => {
   if (active) throw new Error('A recording is already active.');
   resolveFfmpeg();
   recordingOptions = { mode: 'region', resolution: 'native', fps: 30, sharpness: 'balanced', format: 'mp4', ...opts };
-  if (!recordingOptions.savePath) recordingOptions.savePath = app.getPath('videos');
+  if (!recordingOptions.savePath) recordingOptions.savePath = readPreferences().savePath || app.getPath('videos');
+  writePreferences({ savePath: recordingOptions.savePath });
   if (recordingOptions.mode === 'region' && !recordingOptions.region) throw new Error('Select a recording region first.');
   if (recordingOptions.mode === 'window' && !recordingOptions.windowTitle) throw new Error('Select an open application window first.');
   segments = []; segmentIndex = 0; elapsedMs = 0; startedAt = Date.now(); active = true; paused = false;

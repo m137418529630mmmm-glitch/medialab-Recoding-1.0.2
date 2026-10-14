@@ -119,6 +119,10 @@ export default function App() {
     setStorage((prev) => ({ ...prev, format: videoFormat }));
   }, [videoFormat]);
 
+  useEffect(() => {
+    window.electronAPI?.savePreferences?.({ savePath: storage.savePath });
+  }, [storage.savePath]);
+
   // PERSIST ALL SETTINGS TO LOCALSTORAGE WHENEVER THEY CHANGE
   useEffect(() => {
     try {
@@ -155,6 +159,11 @@ export default function App() {
 
   useEffect(() => {
     if (!window.electronAPI) return;
+    if (!initialConfig?.storage?.savePath) {
+      window.electronAPI.getDefaultSaveInfo().then((info: any) => {
+        if (info?.savePath) setStorage((prev) => ({ ...prev, savePath: info.savePath, currentIndex: info.currentIndex ?? prev.currentIndex }));
+      }).catch(() => {});
+    }
     const offStatus = window.electronAPI.onRecordingStatusChange((event: any) => {
       if (event?.status) setRecordingStatus(event.status);
     });
