@@ -1,50 +1,55 @@
+
 {
   "name": "medialab-recoding",
   "version": "1.0.0",
   "private": true,
-  "type": "module",
+  "productName": "medialab Recoding",
+  "description": "MediaLab screen recording application",
   "main": "main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "dist": "vite build && electron-builder --win --x64"
+    "dist": "npm run build && electron-builder --win --x64"
   },
   "dependencies": {
-    "@tailwindcss/vite": "^4.1.0",
+    "ffmpeg-static": "^5.2.0",
     "lucide-react": "^0.468.0",
     "motion": "^11.15.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "tailwindcss": "^4.1.0"
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "34.3.0",
     "electron-builder": "^24.13.3",
-    "ffmpeg-static": "^5.2.0",
+    "tailwindcss": "^4.1.0",
     "typescript": "~5.7.2",
     "vite": "^6.2.0"
   },
   "build": {
     "appId": "com.medialab.recoding",
     "productName": "medialab Recoding",
+    "asar": true,
     "files": [
       "dist/**/*",
       "main.cjs",
       "preload.cjs",
       "overlay.html",
-      "package.json"
+      "package.json",
+      "node_modules/ffmpeg-static/**/*"
     ],
     "asarUnpack": [
       "node_modules/ffmpeg-static/**"
     ],
     "directories": {
-      "buildResources": "public",
       "output": "release"
     },
     "win": {
       "icon": "public/recording_icon_transparent.ico",
-      "target": "portable"
+      "target": [
+        "portable"
+      ]
     }
   }
 }
