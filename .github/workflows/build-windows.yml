@@ -1,0 +1,55 @@
+
+name: Build medialab Recoding for Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: medialab-Recoding-Ready-With-Workflow
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Verify project files
+        shell: pwsh
+        run: |
+          if (!(Test-Path "package.json")) {
+            Write-Error "package.json not found in project directory."
+            exit 1
+          }
+
+          Write-Host "Project files found successfully."
+          Get-Content package.json
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build Windows application
+        run: npm run dist
+
+      - name: Upload Windows EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: medialab-Recoding-Windows-x64
+          path: medialab-Recoding-Ready-With-Workflow/release/*.exe
+          if-no-files-found: error
+          retention-days: 14
