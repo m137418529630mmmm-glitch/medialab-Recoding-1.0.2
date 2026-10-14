@@ -105,7 +105,7 @@ export default function App() {
   // Storage
   const [storage, setStorage] = useState<StorageSettings>(
     initialConfig?.storage || {
-      savePath: 'C:\\Users\\User\\Videos\\Captures',
+      savePath: '',
       autoSequential: true,
       startIndex: 0,
       currentIndex: 0,
@@ -113,6 +113,7 @@ export default function App() {
       format: 'mp4',
     }
   );
+  const [nativePreferencesLoaded, setNativePreferencesLoaded] = useState(!window.electronAPI);
 
   // Synchronize format with storage
   useEffect(() => {
@@ -120,8 +121,10 @@ export default function App() {
   }, [videoFormat]);
 
   useEffect(() => {
+    // Do not overwrite the native saved folder with React's initial/default state.
+    if (!nativePreferencesLoaded || !storage.savePath) return;
     window.electronAPI?.savePreferences?.({ savePath: storage.savePath });
-  }, [storage.savePath]);
+  }, [storage.savePath, nativePreferencesLoaded]);
 
   // PERSIST ALL SETTINGS TO LOCALSTORAGE WHENEVER THEY CHANGE
   useEffect(() => {
@@ -159,11 +162,17 @@ export default function App() {
 
   useEffect(() => {
     if (!window.electronAPI) return;
-    if (!initialConfig?.storage?.savePath) {
-      window.electronAPI.getDefaultSaveInfo().then((info: any) => {
-        if (info?.savePath) setStorage((prev) => ({ ...prev, savePath: info.savePath, currentIndex: info.currentIndex ?? prev.currentIndex }));
-      }).catch(() => {});
-    }
+    window.electronAPI.getDefaultSaveInfo().then((info: any) => {
+      const savedPath = info?.savePath;
+      if (savedPath) {
+        setStorage((prev) => ({
+          ...prev,
+          // Native preferences are the source of truth for the folder across app restarts.
+          savePath: savedPath,
+          currentIndex: info.currentIndex ?? prev.currentIndex,
+        }));
+      }
+    }).catch(() => {}).finally(() => setNativePreferencesLoaded(true));
     const offStatus = window.electronAPI.onRecordingStatusChange((event: any) => {
       if (event?.status) setRecordingStatus(event.status);
     });
