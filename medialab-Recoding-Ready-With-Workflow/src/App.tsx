@@ -162,7 +162,7 @@ export default function App() {
 
   useEffect(() => {
     if (!window.electronAPI) return;
-    window.electronAPI.getDefaultSaveInfo().then((info: any) => {
+    window.electronAPI.getDefaultSaveInfo(initialConfig?.storage?.savePath).then((info: any) => {
       const savedPath = info?.savePath;
       if (savedPath) {
         setStorage((prev) => ({
@@ -174,7 +174,14 @@ export default function App() {
       }
     }).catch(() => {}).finally(() => setNativePreferencesLoaded(true));
     const offStatus = window.electronAPI.onRecordingStatusChange((event: any) => {
-      if (event?.status) setRecordingStatus(event.status);
+      if (event?.status) {
+        if (event.status === 'idle') {
+          setRecordingStatus('idle');
+          setRecordingSeconds(0);
+        } else if (event.status === 'recording' || event.status === 'paused') {
+          setRecordingStatus(event.status);
+        }
+      }
     });
     const offSaved = window.electronAPI.onRecordingSaved((result: any) => {
       if (result?.currentIndex != null) setStorage(prev => ({ ...prev, currentIndex: result.currentIndex }));
@@ -275,13 +282,25 @@ export default function App() {
     }
   };
 
+  const stopInProgressRef = useRef<Promise<any> | null>(null);
+
   const handleStopAndSave = async (customDuration?: number) => {
-    let nativeResult: any = null;
-    if (window.electronAPI && recordingStatus !== 'countdown') {
-      try { nativeResult = await window.electronAPI.stopSave(); }
-      catch (error) { showToast(error instanceof Error ? error.message : 'Could not save recording'); }
-    }
-    const durationSec = customDuration !== undefined ? customDuration : recordingSeconds;
+    if (stopInProgressRef.current) return stopInProgressRef.current;
+    const stopTask = (async () => {
+      let nativeResult: any = null;
+      if (window.electronAPI && recordingStatus !== 'countdown') {
+        try {
+          nativeResult = await window.electronAPI.stopSave();
+          if (!nativeResult?.path) {
+            showToast(lang === 'en' ? 'Recording was not saved. Please try again.' : 'لم يتم حفظ التسجيل. حاول مرة أخرى.');
+            return;
+          }
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : 'Could not save recording');
+          return;
+        }
+      }
+      const durationSec = customDuration !== undefined ? customDuration : recordingSeconds;
     const effectiveDuration = Math.max(1, durationSec);
 
     const upcomingFileName = nativeResult?.fileName || (storage.autoSequential
@@ -331,7 +350,11 @@ export default function App() {
     if (recordIntervalRef.current) clearInterval(recordIntervalRef.current);
     if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
 
-    showToast(`${t.toastSaved}: ${upcomingFileName}`);
+      showToast(`${t.toastSaved}: ${upcomingFileName}`);
+    })();
+    stopInProgressRef.current = stopTask;
+    try { await stopTask; }
+    finally { stopInProgressRef.current = null; }
   };
 
   const handleStopAndSaveRef = useRef(handleStopAndSave);

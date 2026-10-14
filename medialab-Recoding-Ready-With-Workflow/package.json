@@ -7,15 +7,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "dist": "vite build && electron-builder --win --x64"
+    "dist": "npm run build && electron-builder --win --x64"
   },
   "dependencies": {
-    "@tailwindcss/vite": "^4.1.0",
-    "lucide-react": "^0.468.0",
-    "motion": "^11.15.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "tailwindcss": "^4.1.0",
     "ffmpeg-static": "^5.2.0"
   },
   "devDependencies": {
@@ -23,7 +17,13 @@
     "electron": "34.3.0",
     "electron-builder": "^24.13.3",
     "typescript": "~5.7.2",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "@tailwindcss/vite": "^4.1.0",
+    "lucide-react": "^0.468.0",
+    "motion": "^11.15.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwindcss": "^4.1.0"
   },
   "build": {
     "appId": "com.medialab.recoding",
@@ -33,8 +33,7 @@
       "main.cjs",
       "preload.cjs",
       "overlay.html",
-      "package.json",
-      "node_modules/ffmpeg-static/**/*"
+      "package.json"
     ],
     "asarUnpack": [
       "node_modules/ffmpeg-static/**"

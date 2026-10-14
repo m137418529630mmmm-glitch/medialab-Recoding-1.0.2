@@ -2,7 +2,8 @@ export {};
 declare global {
   interface Window {
     electronAPI?: {
-      getDefaultSaveInfo: () => Promise<{savePath:string;currentIndex:number}>;
+      getDefaultSaveInfo: (fallbackPath?: string) => Promise<{savePath:string;currentIndex:number;preferences?:any}>;
+      savePreferences?: (preferences:any) => Promise<any>;
       getOpenWindows: () => Promise<Array<{id:string;title:string;appName:string;icon:string;width:number;height:number}>>;
       chooseFolder: (format:string) => Promise<{savePath:string;currentIndex:number}|null>;
       selectRegion: () => Promise<{x:number;y:number;width:number;height:number;cancelled?:boolean}>;

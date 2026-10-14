@@ -56,8 +56,9 @@ function ensureOverlay() {
   overlayWin = new BrowserWindow({
     x: display.bounds.x, y: display.bounds.y,
     width: display.bounds.width, height: display.bounds.height,
-    transparent: true, frame: false, resizable: false, movable: false,
+    transparent: true, backgroundColor: '#00000000', frame: false, resizable: false, movable: false,
     alwaysOnTop: true, skipTaskbar: true, show: false, hasShadow: false,
+    paintWhenInitiallyHidden: true,
     webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false }
   });
   overlayWin.setAlwaysOnTop(true, 'screen-saver');
@@ -159,11 +160,17 @@ function buildInputArgs(opts) {
   if (opts.mode === 'region' && opts.region) {
     const r = clampRegionToPrimaryDisplay(opts.region);
     recordingOptions.region = r;
-    const display = screen.getPrimaryDisplay().bounds;
-    // gdigrab offsets are relative to the desktop capture origin.
-    const x = Math.max(0, r.x - display.x);
-    const y = Math.max(0, r.y - display.y);
-    args.push('-offset_x', String(x), '-offset_y', String(y), '-video_size', `${r.width}x${r.height}`);
+    const primary = screen.getPrimaryDisplay();
+    const display = primary.bounds;
+    // Electron coordinates are DIP; gdigrab captures physical desktop pixels.
+    // Convert region origin and size using the display scale factor to avoid
+    // capturing the wrong area on Windows with 125%/150% scaling.
+    const scale = Number(primary.scaleFactor) > 0 ? Number(primary.scaleFactor) : 1;
+    const x = Math.max(0, Math.round((r.x - display.x) * scale));
+    const y = Math.max(0, Math.round((r.y - display.y) * scale));
+    const w = Math.max(2, Math.floor((r.width * scale) / 2) * 2);
+    const h = Math.max(2, Math.floor((r.height * scale) / 2) * 2);
+    args.push('-offset_x', String(x), '-offset_y', String(y), '-video_size', `${w}x${h}`);
   }
   if (opts.mode === 'window' && opts.windowTitle) args.push('-i', `title=${opts.windowTitle}`);
   else args.push('-i', 'desktop');
@@ -268,7 +275,8 @@ async function stopCapture() {
     if (!fs.existsSync(output) || fs.statSync(output).size < 2048) throw new Error('The output video is empty or incomplete.');
     try { fs.rmSync(tempRoot, { recursive: true, force: true }); } catch {}
     const result = { path: output, fileName: path.basename(output), durationSeconds: Math.max(1, Math.round(elapsedMs / 1000)), currentIndex: index };
-    send('recording-saved', result); send('recording-status-change', { status: 'idle' });
+    send('recording-saved', result);
+    send('recording-status-change', { status: 'idle' });
     return result;
   })();
   try { return await stopPromise; }
@@ -296,12 +304,15 @@ app.whenReady().then(() => {
 app.on('before-quit', () => { if (ffmpeg) { try { ffmpeg.stdin.write('q\n'); } catch {} } });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 
-ipcMain.handle('get-default-save-info', () => {
+ipcMain.handle('get-default-save-info', (_e, rendererFallbackPath) => {
   const prefs = readPreferences();
-  const savePath = prefs.savePath && fs.existsSync(prefs.savePath) ? prefs.savePath : app.getPath('videos');
+  const candidates = [prefs.savePath, rendererFallbackPath, app.getPath('videos')];
+  const savePath = candidates.find(p => typeof p === 'string' && p.trim() && fs.existsSync(p)) || app.getPath('videos');
+  // Migrate an existing renderer/localStorage choice into native preferences.
+  if (prefs.savePath !== savePath) writePreferences({ savePath });
   let currentIndex = 0;
   while (fs.existsSync(path.join(savePath, `${currentIndex}.mp4`))) currentIndex++;
-  return { savePath, currentIndex, preferences: prefs };
+  return { savePath, currentIndex, preferences: readPreferences() };
 });
 ipcMain.handle('save-preferences', (_e, patch = {}) => writePreferences(patch));
 ipcMain.handle('get-open-windows', () => listOpenWindows());
@@ -311,7 +322,10 @@ ipcMain.handle('choose-folder', async (_e, format = 'mp4') => {
   const folder = result.filePaths[0];
   writePreferences({ savePath: folder });
   let index = 0;
-  while (fs.existsSync(path.join(folder, `${index}.${format}`))) index++;
+  while (
+    fs.existsSync(path.join(folder, `${index}.${format}`)) ||
+    fs.existsSync(path.join(folder, `${index}.${format === 'mp4' ? 'mkv' : 'mp4'}`))
+  ) index++;
   return { savePath: folder, currentIndex: index };
 });
 ipcMain.handle('select-region', async () => {
@@ -335,7 +349,11 @@ ipcMain.handle('start-record', async (_e, opts = {}) => {
   try {
     await startSegment();
     const win = ensureOverlay(); win.show(); win.setIgnoreMouseEvents(true, { forward: true });
-    safeOverlaySend('show-recording-hud', { region: recordingOptions.mode === 'region' ? recordingOptions.region : null });
+    const overlayBounds = screen.getPrimaryDisplay().bounds;
+    safeOverlaySend('show-recording-hud', {
+      region: recordingOptions.mode === 'region' ? recordingOptions.region : null,
+      origin: { x: overlayBounds.x, y: overlayBounds.y }
+    });
     if (mainWin && !mainWin.isDestroyed()) mainWin.minimize();
     send('recording-status-change', { status: 'recording' });
     return { ok: true };
