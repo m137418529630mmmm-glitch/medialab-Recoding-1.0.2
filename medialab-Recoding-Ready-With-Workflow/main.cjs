@@ -226,16 +226,29 @@ async function stopCapture() {
     let output;
     do { output = path.join(folder, `${recordingOptions.prefix || ''}${index}.${ext}`); index++; } while (fs.existsSync(output));
     const exe = resolveFfmpeg();
-    if (valid.length === 1 && ext === 'mkv') fs.copyFileSync(valid[0], output);
-    else {
+    if (valid.length === 1 && ext === 'mkv') {
+      // MKV is already finalized by FFmpeg; copying avoids unnecessary processing.
+      fs.copyFileSync(valid[0], output);
+    } else {
       const listPath = path.join(tempRoot, 'concat.txt');
-      fs.writeFileSync(listPath, valid.map(p => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`).join('\n'), 'utf8');
-      // Re-encode the final output to MP4; stream-copy concat can leave broken MP4 indexes on some builds.
+      const concatEscape = p => p.replace(/\\/g, '/').replace(/'/g, "'\\''");
+      fs.writeFileSync(listPath, valid.map(p => `file '${concatEscape(p)}'`).join('\n'), 'utf8');
+
+      // All segments use the same encoder settings. Stream-copy avoids re-encoding
+      // the entire recording on Stop & Save and therefore reduces finalization time.
+      const args = [
+        '-hide_banner', '-loglevel', 'warning',
+        '-f', 'concat', '-safe', '0', '-i', listPath,
+        '-map', '0:v:0', '-c:v', 'copy', '-movflags', '+faststart', '-y', output
+      ];
       await new Promise((resolve, reject) => {
-        const child = spawn(exe, ['-hide_banner', '-loglevel', 'warning', '-f', 'concat', '-safe', '0', '-i', listPath,
-          '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '21', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-y', output], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
-        let err = ''; child.stderr.on('data', d => { err = (err + d.toString()).slice(-5000); });
-        child.on('error', reject); child.on('close', code => code === 0 ? resolve() : reject(new Error(`Could not finalize video (${code}). ${err.slice(-2000)}`)));
+        const child = spawn(exe, args, { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+        let err = '';
+        child.stderr.on('data', d => { err = (err + d.toString()).slice(-5000); });
+        child.on('error', reject);
+        child.on('close', code => code === 0
+          ? resolve()
+          : reject(new Error(`Could not finalize video (${code}). ${err.slice(-2000)}`)));
       });
     }
     if (!fs.existsSync(output) || fs.statSync(output).size < 2048) throw new Error('The output video is empty or incomplete.');
