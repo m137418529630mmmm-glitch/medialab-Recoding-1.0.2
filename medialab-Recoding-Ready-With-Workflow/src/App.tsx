@@ -21,9 +21,9 @@ import {
   VideoFormat,
   ToggleSettings,
   StorageSettings,
-  SavedRecording,
 } from './types/recorder';
 import { Language, translations } from './utils/translations';
+import { localDateStamp } from './utils/format';
 import { CircleDot, CheckCircle2 } from 'lucide-react';
 
 const SETTINGS_STORAGE_KEY = 'medialab_recorder_settings_v2';
@@ -47,6 +47,11 @@ export default function App() {
   // Language state - English default
   const [lang, setLang] = useState<Language>(initialConfig?.lang || 'en');
   const t = translations[lang];
+  // Latest strings/handlers for callbacks that are registered once (IPC listeners).
+  const tRef = useRef(t);
+  tRef.current = t;
+  const handleStartRef = useRef<(skipCountdown?: boolean) => void>(() => {});
+  const toastTimerRef = useRef<any>(null);
 
   // Settings Modal state
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -87,8 +92,9 @@ export default function App() {
     const defaults: ToggleSettings = {
       hideCursor: true,
       highlightClicks: false,
-      systemAudio: true,
-      micAudio: true,
+      // Audio capture is not implemented in the FFmpeg pipeline yet, so these stay off.
+      systemAudio: false,
+      micAudio: false,
       countdown3s: true,
       countdownDuration: 3,
       autoStopEnabled: false,
@@ -99,6 +105,8 @@ export default function App() {
     return {
       ...defaults,
       ...(initialConfig?.toggles || {}),
+      systemAudio: false,
+      micAudio: false,
     };
   });
 
@@ -185,14 +193,12 @@ export default function App() {
     });
     const offSaved = window.electronAPI.onRecordingSaved((result: any) => {
       if (result?.currentIndex != null) setStorage(prev => ({ ...prev, currentIndex: result.currentIndex }));
-      showToast(`Saved: ${result?.fileName || 'recording'}`);
+      showToast(`${tRef.current.toastSaved}: ${result?.fileName || ''}`);
     });
     const offError = window.electronAPI.onRecordingError?.((message: string) => showToast(message));
-    return () => { if (typeof offStatus === 'function') offStatus(); if (typeof offSaved === 'function') offSaved(); if (typeof offError === 'function') offError(); };
+    const offHotkey = window.electronAPI.onHotkeyStart?.(() => handleStartRef.current(true));
+    return () => { if (typeof offHotkey === 'function') offHotkey(); if (typeof offStatus === 'function') offStatus(); if (typeof offSaved === 'function') offSaved(); if (typeof offError === 'function') offError(); };
   }, []);
-
-  // Saved recordings
-  const [, setRecordings] = useState<SavedRecording[]>([]);
 
   // Modals
   const [isRegionPickerOpen, setIsRegionPickerOpen] = useState(false);
@@ -217,7 +223,8 @@ export default function App() {
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => {
       setToastMessage(null);
     }, 3000);
   };
@@ -237,7 +244,8 @@ export default function App() {
         format: storage.format,
         savePath: storage.savePath,
         currentIndex: storage.currentIndex,
-        prefix: storage.autoSequential ? storage.prefix.trim() : 'recording_',
+        prefix: storage.prefix.trim(),
+        autoSequential: storage.autoSequential,
       });
     } catch (error) {
       console.error(error);
@@ -246,12 +254,13 @@ export default function App() {
     }
   };
 
-  const handleStartRecording = () => {
+  const handleStartRecording = (skipCountdown = false) => {
     if (recordingStatus !== 'idle') return;
 
-    if (toggles.countdown3s) {
+    if (toggles.countdown3s && !skipCountdown) {
       setRecordingStatus('countdown');
       setCountdownValue(toggles.countdownDuration);
+      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
 
       let currentCount = toggles.countdownDuration;
       countdownTimerRef.current = setInterval(() => {
@@ -284,73 +293,51 @@ export default function App() {
 
   const stopInProgressRef = useRef<Promise<any> | null>(null);
 
-  const handleStopAndSave = async (customDuration?: number) => {
+  const handleStopAndSave = async () => {
     if (stopInProgressRef.current) return stopInProgressRef.current;
     const stopTask = (async () => {
+      // Stop pressed during the countdown = cancel (nothing has been recorded yet).
+      if (recordingStatus === 'countdown') {
+        if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+        setRecordingStatus('idle');
+        setRecordingSeconds(0);
+        showToast(t.countdownCancelled);
+        return;
+      }
+
       let nativeResult: any = null;
-      if (window.electronAPI && recordingStatus !== 'countdown') {
+      if (window.electronAPI) {
         try {
           nativeResult = await window.electronAPI.stopSave();
           if (!nativeResult?.path) {
+            setRecordingStatus('idle');
+            setRecordingSeconds(0);
             showToast(lang === 'en' ? 'Recording was not saved. Please try again.' : 'لم يتم حفظ التسجيل. حاول مرة أخرى.');
             return;
           }
         } catch (error) {
+          // The main process resets itself and reports "idle" even when saving fails.
           showToast(error instanceof Error ? error.message : 'Could not save recording');
           return;
         }
       }
-      const durationSec = customDuration !== undefined ? customDuration : recordingSeconds;
-    const effectiveDuration = Math.max(1, durationSec);
 
-    const upcomingFileName = nativeResult?.fileName || (storage.autoSequential
-      ? `${storage.prefix.trim()}${storage.currentIndex}.${storage.format}`
-      : `recording_${new Date().toISOString().slice(0, 10)}.${storage.format}`);
+      setRecordingStatus('idle');
+      setRecordingSeconds(0);
+      if (recordIntervalRef.current) clearInterval(recordIntervalRef.current);
+      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
 
-    const newRecord: SavedRecording = {
-      id: `rec-${Date.now()}`,
-      fileName: upcomingFileName,
-      fullPath: nativeResult?.path || `${storage.savePath}\\${upcomingFileName}`,
-      durationSeconds: nativeResult?.durationSeconds || effectiveDuration,
-      durationFormatted: formatTimer(effectiveDuration),
-      resolution:
-        resolution === 'native'
-          ? `${region.width} × ${region.height}`
-          : resolution === '4k'
-          ? '3840 × 2160'
-          : resolution === '1080p'
-          ? '1920 × 1080'
-          : '1280 × 720',
-      fps: fps,
-      sizeMb: Math.max(
-        1.2,
-        Math.round(((effectiveDuration * 1.8 * (fps / 30)) + Number.EPSILON) * 10) / 10
-      ),
-      mode: captureMode,
-      modeName:
-        captureMode === 'fullscreen'
-          ? t.fullScreen
-          : captureMode === 'region'
-          ? `${t.customRegion} (${aspectPreset})`
-          : t.appWindow,
-      createdAt: new Date().toLocaleTimeString(),
-    };
-
-    setRecordings((prev) => [newRecord, ...prev]);
-
-    if (storage.autoSequential) {
-      setStorage((prev) => ({
-        ...prev,
-        currentIndex: prev.currentIndex + 1,
-      }));
-    }
-
-    setRecordingStatus('idle');
-    setRecordingSeconds(0);
-    if (recordIntervalRef.current) clearInterval(recordIntervalRef.current);
-    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
-
-      showToast(`${t.toastSaved}: ${upcomingFileName}`);
+      // In Electron the main process already returned the next free index and shows the
+      // "saved" toast (via the recording-saved event). Only the browser preview needs this.
+      if (!nativeResult) {
+        if (storage.autoSequential) {
+          setStorage((prev) => ({ ...prev, currentIndex: prev.currentIndex + 1 }));
+        }
+        const previewName = storage.autoSequential
+          ? `${storage.prefix.trim()}${storage.currentIndex}.${storage.format}`
+          : `recording_${localDateStamp()}.${storage.format}`;
+        showToast(`${t.toastSaved}: ${previewName}`);
+      }
     })();
     stopInProgressRef.current = stopTask;
     try { await stopTask; }
@@ -359,45 +346,41 @@ export default function App() {
 
   const handleStopAndSaveRef = useRef(handleStopAndSave);
   handleStopAndSaveRef.current = handleStopAndSave;
+  handleStartRef.current = handleStartRecording;
 
+  // Elapsed-seconds ticker (only while actively recording; paused/idle stop it).
   useEffect(() => {
-    if (recordingStatus === 'recording') {
-      const targetSecs = toggles.autoStopEnabled
-        ? (toggles.autoStopHours || 0) * 3600 +
-          (toggles.autoStopMinutes || 0) * 60 +
-          (toggles.autoStopSeconds || 0)
-        : 0;
-
-      recordIntervalRef.current = setInterval(() => {
-        setRecordingSeconds((prev) => {
-          const nextVal = prev + 1;
-          if (targetSecs > 0 && nextVal >= targetSecs) {
-            clearInterval(recordIntervalRef.current);
-            setTimeout(() => {
-              handleStopAndSaveRef.current(targetSecs);
-              showToast(`${t.autoStopToast} ${formatTimer(targetSecs)}`);
-            }, 0);
-          }
-          return nextVal;
-        });
-      }, 1000);
-    } else {
-      if (recordIntervalRef.current) clearInterval(recordIntervalRef.current);
-    }
+    if (recordingStatus !== 'recording') return;
+    recordIntervalRef.current = setInterval(() => {
+      setRecordingSeconds((prev) => prev + 1);
+    }, 1000);
     return () => {
       if (recordIntervalRef.current) clearInterval(recordIntervalRef.current);
     };
+  }, [recordingStatus]);
+
+  // Auto-stop: kept out of the state updater so it has no side effects inside it.
+  useEffect(() => {
+    if (recordingStatus !== 'recording' || !toggles.autoStopEnabled) return;
+    const targetSecs =
+      (toggles.autoStopHours || 0) * 3600 +
+      (toggles.autoStopMinutes || 0) * 60 +
+      (toggles.autoStopSeconds || 0);
+    if (targetSecs > 0 && recordingSeconds >= targetSecs && !stopInProgressRef.current) {
+      showToast(`${t.autoStopToast} ${formatTimer(targetSecs)}`);
+      void handleStopAndSaveRef.current();
+    }
   }, [
+    recordingSeconds,
     recordingStatus,
     toggles.autoStopEnabled,
     toggles.autoStopHours,
     toggles.autoStopMinutes,
     toggles.autoStopSeconds,
-    t.autoStopToast,
   ]);
 
   const handleTakeSnapshot = () => {
-    showToast(lang === 'en' ? 'Snapshot saved' : 'تم حفظ لقطة الشاشة');
+    showToast(t.snapshotUnavailable);
   };
 
   return (
@@ -414,7 +397,7 @@ export default function App() {
       />
 
       {/* Main Container - Centered, strictly bounded, NO overflow */}
-      <main className="flex-1 w-full max-w-4xl mx-auto px-5 sm:px-8 py-5 sm:py-6 space-y-5 box-border overflow-x-hidden">
+      <main className="flex-1 w-full max-w-xl mx-auto px-5 py-5 space-y-4 box-border overflow-x-hidden">
         {/* Section 1: Capture Mode */}
         <CaptureModeSelector
           lang={lang}
@@ -454,7 +437,7 @@ export default function App() {
         <div className="pt-2 w-full min-w-0">
           <button
             type="button"
-            onClick={handleStartRecording}
+            onClick={() => handleStartRecording()}
             className="w-full py-3.5 px-6 bg-[#D85631] hover:bg-[#C24623] active:scale-[0.99] text-white text-base font-bold rounded-xl shadow-sm transition-all duration-150 flex items-center justify-center gap-2.5 cursor-pointer truncate"
           >
             <CircleDot className="w-5 h-5 fill-current shrink-0" />

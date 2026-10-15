@@ -12,5 +12,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onRegionUpdated: (callback) => { const fn = (_e, value) => callback(value); ipcRenderer.on('region-updated', fn); return () => ipcRenderer.removeListener('region-updated', fn); },
   onRecordingSaved: (callback) => { const fn = (_e, value) => callback(value); ipcRenderer.on('recording-saved', fn); return () => ipcRenderer.removeListener('recording-saved', fn); },
   onRecordingStatusChange: (callback) => { const fn = (_e, value) => callback(value); ipcRenderer.on('recording-status-change', fn); return () => ipcRenderer.removeListener('recording-status-change', fn); },
+  onHotkeyStart: (callback) => { const fn = () => callback(); ipcRenderer.on('hotkey-start', fn); return () => ipcRenderer.removeListener('hotkey-start', fn); },
   onRecordingError: (callback) => { const fn = (_e, value) => callback(value); ipcRenderer.on('recording-error', fn); return () => ipcRenderer.removeListener('recording-error', fn); }
 });

@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import { StorageSettings } from '../types/recorder';
 import { Language, translations } from '../utils/translations';
 import { Hash, FolderOpen } from 'lucide-react';
+import { localDateStamp } from '../utils/format';
 
 interface StorageAndNamingProps {
   lang: Language;
@@ -19,7 +20,7 @@ export const StorageAndNaming: React.FC<StorageAndNamingProps> = ({
 
   const upcomingFileName = storage.autoSequential
     ? `${storage.prefix.trim()}${storage.currentIndex}.${storage.format}`
-    : `recording_${new Date().toISOString().slice(0, 10)}.${storage.format}`;
+    : `recording_${localDateStamp()}.${storage.format}`;
 
   // When clicking Browse, directly open the OS folder selector (فولدرات الجهاز)
   const handleBrowseClick = async () => {
@@ -108,6 +109,7 @@ export const StorageAndNaming: React.FC<StorageAndNamingProps> = ({
           onChange={(e) =>
             setStorage((prev) => ({ ...prev, savePath: e.target.value }))
           }
+          onBlur={() => { if (storage.savePath.trim()) (window as any).electronAPI?.savePreferences?.({ savePath: storage.savePath, createSavePath: true }); }}
           placeholder="C:\Users\Videos\Captures"
           className="flex-1 min-w-0 bg-[#FFFFFF] border border-[#E5E2DC] focus:border-[#D85631] rounded-xl px-3.5 py-3 text-xs font-mono text-[#1E1D1B] outline-none shadow-sm truncate"
         />

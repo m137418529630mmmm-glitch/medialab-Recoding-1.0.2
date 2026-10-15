@@ -1,36 +1,109 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><style>
-*{box-sizing:border-box;user-select:none;-webkit-user-select:none}
-html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;font-family:Segoe UI,Arial,sans-serif;color:#fff}
-#selection{display:none;position:absolute;inset:0;cursor:crosshair;background:transparent}
-#selectionTip{position:absolute;top:24px;left:50%;transform:translateX(-50%);padding:12px 18px;background:#181818eF;border:1px solid #111;border-radius:12px;font-weight:600;pointer-events:none;user-select:none;-webkit-user-select:none}
-#rect{position:absolute;border:2px dashed #111;background:transparent;display:none}
-#frame{position:absolute;border:2px dashed #111;box-shadow:0 0 2px #000, inset 0 0 2px #000;display:none;pointer-events:none}
-#hud{position:absolute;display:none;top:24px;left:50%;transform:translateX(-50%);align-items:center;gap:9px;background:#191919ee;border:1px solid #ffffff2b;border-radius:14px;padding:8px 10px;box-shadow:0 8px 32px #0007;pointer-events:auto;white-space:nowrap}
-#timer{font:700 14px Consolas,monospace;color:#fff;min-width:76px}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#e23d32;margin-right:7px;animation:pulse 1s infinite}
-button{border:0;border-radius:8px;padding:8px 11px;color:white;background:#333;cursor:pointer;font-weight:700}button:hover{filter:brightness(1.18)}#stop{background:#D85631}#toggle{background:#555}
-@keyframes pulse{50%{opacity:.3}}
-</style></head><body>
-<div id="selection"><div id="selectionTip">Drag to select the recording region · Esc to cancel</div><div id="rect"></div></div>
-<div id="frame"></div><div id="hud"><span class="dot"></span><span id="timer">00:00:00</span><button id="pause">Pause</button><button id="stop">Stop &amp; Save</button><button id="toggle">Hide bar</button></div>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Region picker</title>
+<style>
+  * { box-sizing: border-box; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
+  ::selection { background: transparent; color: inherit; }
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent;
+    font-family: "Segoe UI", Arial, sans-serif; color: #fff; }
+  body { background-size: 100% 100%; background-repeat: no-repeat; }
+  #surface { position: absolute; inset: 0; cursor: crosshair; touch-action: none; }
+  #dim { position: absolute; inset: 0; background: rgba(0,0,0,.38); pointer-events: none; }
+  #rect { position: absolute; display: none; border: 2px solid #D85631; pointer-events: none;
+    box-shadow: 0 0 0 9999px rgba(0,0,0,.45); }
+  #size { position: absolute; display: none; padding: 3px 8px; border-radius: 6px; background: #D85631; pointer-events: none;
+    font: 700 12px Consolas, monospace; white-space: nowrap; }
+  #tip { position: absolute; top: 24px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 14px;
+    padding: 9px 10px 9px 18px; background: rgba(24,24,24,.94); border: 1px solid rgba(255,255,255,.18);
+    border-radius: 12px; font-size: 14px; font-weight: 600; white-space: nowrap; }
+  #cancel { cursor: pointer; border: 0; border-radius: 8px; padding: 6px 12px; background: #3a3a3a; color: #fff;
+    font: 600 12px "Segoe UI", Arial, sans-serif; }
+  #cancel:hover { background: #D85631; }
+</style>
+</head>
+<body>
+  <div id="surface"></div>
+  <div id="dim"></div>
+  <div id="rect"></div>
+  <div id="size"></div>
+  <div id="tip"><span>Drag to select the recording region · Esc to cancel</span><button id="cancel" type="button">Cancel</button></div>
 <script>
 const { ipcRenderer } = require('electron');
-const selection=document.getElementById('selection'), rect=document.getElementById('rect'), frame=document.getElementById('frame'), hud=document.getElementById('hud'), timer=document.getElementById('timer');
-let start=null, hidden=false, paused=false, elapsedMs=0, started=Date.now(), ticker=null, overlayOrigin={x:0,y:0};
-document.addEventListener('selectstart', e => e.preventDefault());
-document.addEventListener('dragstart', e => e.preventDefault());
+const surface = document.getElementById('surface');
+const dim = document.getElementById('dim');
+const rect = document.getElementById('rect');
+const sizeLabel = document.getElementById('size');
+let origin = { x: 0, y: 0 };
+let start = null;
 
-ipcRenderer.on('start-region-select',()=>{window.getSelection()?.removeAllRanges();selection.style.display='block';rect.style.display='none';start=null;});
-selection.addEventListener('mousedown',e=>{if(e.button!==0)return;window.getSelection()?.removeAllRanges();start={x:e.screenX,y:e.screenY};rect.style.display='block';rect.style.left=(e.screenX-overlayOrigin.x)+'px';rect.style.top=(e.screenY-overlayOrigin.y)+'px';rect.style.width='0';rect.style.height='0';e.preventDefault();});
-selection.addEventListener('mousemove',e=>{if(!start)return;let x=Math.min(start.x,e.screenX),y=Math.min(start.y,e.screenY),w=Math.abs(e.screenX-start.x),h=Math.abs(e.screenY-start.y);rect.style.left=(x-overlayOrigin.x)+'px';rect.style.top=(y-overlayOrigin.y)+'px';rect.style.width=w+'px';rect.style.height=h+'px';e.preventDefault();});
-selection.addEventListener('mouseup',e=>{if(!start)return;const dx=Math.abs(e.screenX-start.x),dy=Math.abs(e.screenY-start.y);const x=Math.min(start.x,e.screenX),y=Math.min(start.y,e.screenY);if(dx<8||dy<8){start=null;rect.style.display='none';return;}const width=Math.max(2,Math.floor(dx/2)*2),height=Math.max(2,Math.floor(dy/2)*2);selection.style.display='none';rect.style.display='none';ipcRenderer.send('region-selected',{x,y,width,height});start=null;e.preventDefault();});
-window.addEventListener('keydown',e=>{if(e.key==='Escape'){selection.style.display='none';start=null;ipcRenderer.send('region-selected',{cancelled:true});}});
-function updateTimer(){let ms=elapsedMs+(paused?0:Date.now()-started),s=Math.floor(ms/1000);timer.textContent=[Math.floor(s/3600),Math.floor(s%3600/60),s%60].map(v=>String(v).padStart(2,'0')).join(':');}
-ipcRenderer.on('show-recording-hud',(_e,data)=>{overlayOrigin=data?.origin||{x:0,y:0};frame.style.display='block';if(data&&data.region){const r=data.region;frame.style.left=(r.x-overlayOrigin.x)+'px';frame.style.top=(r.y-overlayOrigin.y)+'px';frame.style.width=r.width+'px';frame.style.height=r.height+'px';}else{frame.style.left='0';frame.style.top='0';frame.style.width='100vw';frame.style.height='100vh';}hud.style.display=hidden?'none':'flex';paused=false;elapsedMs=0;started=Date.now();clearInterval(ticker);ticker=setInterval(updateTimer,250);});
-ipcRenderer.on('hud-status',(_e,data)=>{paused=!!data.paused;elapsedMs=data.elapsedMs||elapsedMs;started=Date.now();document.getElementById('pause').textContent=paused?'Resume':'Pause';});
-ipcRenderer.on('hide-hud',()=>{frame.style.display='none';hud.style.display='none';clearInterval(ticker);});
-hud.addEventListener('mouseenter',()=>ipcRenderer.send('overlay-mouse-enter'));hud.addEventListener('mouseleave',()=>ipcRenderer.send('overlay-mouse-leave'));
-document.getElementById('pause').onclick=()=>ipcRenderer.send('hud-pause-resume');
-document.getElementById('stop').onclick=()=>ipcRenderer.send('hud-stop-save');
-document.getElementById('toggle').onclick=()=>{hidden=!hidden;hud.style.display=hidden?'none':'flex';};
-</script></body></html>
+function cancel() { ipcRenderer.send('region-selected', { cancelled: true }); }
+function reset() {
+  start = null;
+  rect.style.display = 'none';
+  sizeLabel.style.display = 'none';
+  dim.style.display = 'block';
+}
+function box(x, y) {
+  const left = Math.min(start.x, x), top = Math.min(start.y, y);
+  return { left, top, width: Math.abs(x - start.x), height: Math.abs(y - start.y) };
+}
+function draw(x, y) {
+  const b = box(x, y);
+  dim.style.display = 'none';
+  rect.style.display = 'block';
+  rect.style.left = b.left + 'px'; rect.style.top = b.top + 'px';
+  rect.style.width = b.width + 'px'; rect.style.height = b.height + 'px';
+  sizeLabel.style.display = 'block';
+  sizeLabel.textContent = Math.round(b.width) + ' × ' + Math.round(b.height);
+  sizeLabel.style.left = b.left + 'px';
+  sizeLabel.style.top = Math.max(4, b.top - 28) + 'px';
+}
+
+ipcRenderer.on('start-region-select', (_e, data) => {
+  origin = (data && data.origin) || { x: 0, y: 0 };
+  reset();
+  if (data && data.image) {
+    document.body.style.backgroundImage = 'url("' + data.image + '")';
+    const img = new Image();
+    img.onload = img.onerror = () => ipcRenderer.send('overlay-ready');
+    img.src = data.image;
+  } else {
+    // Fallback (screen capture unavailable): transparent picker over the live desktop.
+    document.body.style.backgroundImage = 'none';
+    dim.style.background = 'rgba(0,0,0,.2)';
+    ipcRenderer.send('overlay-ready');
+  }
+});
+ipcRenderer.on('cancel-region-select', reset);
+
+// Both mouse buttons can start a selection (left-handed / swapped buttons), no context menu, no text selection.
+surface.addEventListener('contextmenu', e => e.preventDefault());
+surface.addEventListener('dragstart', e => e.preventDefault());
+surface.addEventListener('selectstart', e => e.preventDefault());
+surface.addEventListener('pointerdown', e => {
+  if (e.button !== 0 && e.button !== 2) return;
+  e.preventDefault();
+  const sel = window.getSelection(); if (sel) sel.removeAllRanges();
+  surface.setPointerCapture(e.pointerId);
+  start = { x: e.clientX, y: e.clientY };
+  draw(e.clientX, e.clientY);
+});
+surface.addEventListener('pointermove', e => { if (start) draw(e.clientX, e.clientY); });
+surface.addEventListener('pointerup', e => {
+  if (!start) return;
+  const b = box(e.clientX, e.clientY);
+  start = null;
+  if (b.width < 8 || b.height < 8) { reset(); return; }
+  ipcRenderer.send('region-selected', {
+    x: Math.round(origin.x + b.left), y: Math.round(origin.y + b.top),
+    width: Math.max(2, Math.floor(b.width / 2) * 2), height: Math.max(2, Math.floor(b.height / 2) * 2)
+  });
+});
+surface.addEventListener('pointercancel', reset);
+document.getElementById('cancel').addEventListener('click', cancel);
+window.addEventListener('keydown', e => { if (e.key === 'Escape') cancel(); });
+</script>
+</body>
+</html>

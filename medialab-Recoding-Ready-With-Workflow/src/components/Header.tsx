@@ -32,7 +32,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="bg-[#F4F3F0] border-b border-[#E5E2DC] sticky top-0 z-40">
-      <div className="max-w-xl mx-auto px-4 py-4">
+      <div className="max-w-xl mx-auto px-5 py-3">
         <div className="flex items-center justify-between gap-4">
           {/* Logo Area: Exact mediaLab publishing logo without any square box */}
           <div className="flex items-center">

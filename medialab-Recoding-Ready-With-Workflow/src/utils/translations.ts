@@ -79,6 +79,9 @@ export const translations = {
     clearAll: 'Clear All',
     toastSaved: 'Recording saved as',
     toastDiscarded: 'Recording discarded',
+    comingSoon: 'Coming soon',
+    snapshotUnavailable: 'Snapshots are not available yet',
+    countdownCancelled: 'Recording cancelled',
   },
   ar: {
     appName: 'ريكورد برو',
@@ -158,5 +161,8 @@ export const translations = {
     clearAll: 'مسح السجل',
     toastSaved: 'تم حفظ التسجيل باسم',
     toastDiscarded: 'تم إلغاء التسجيل',
+    comingSoon: 'قريباً',
+    snapshotUnavailable: 'التقاط الصور غير متاح حالياً',
+    countdownCancelled: 'تم إلغاء التسجيل',
   },
 };

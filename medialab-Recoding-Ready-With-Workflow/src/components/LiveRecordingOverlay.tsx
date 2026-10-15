@@ -210,7 +210,7 @@ export const LiveRecordingOverlay: React.FC<LiveRecordingOverlayProps> = ({
                 }`}
               />
               <span className="text-xs font-black font-mono text-[#D85631]">
-                {status === 'recording' ? 'REC' : 'PAUSED'}
+                {status === 'recording' ? 'REC' : status === 'paused' ? 'PAUSED' : 'READY'}
               </span>
             </div>
 

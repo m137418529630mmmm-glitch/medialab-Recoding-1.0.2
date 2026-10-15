@@ -1,0 +1,76 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Recording controls</title>
+<style>
+  * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent;
+    font-family: "Segoe UI", Arial, sans-serif; color: #fff; }
+  #hud { height: 100%; display: flex; align-items: center; gap: 9px; padding: 0 10px 0 14px; white-space: nowrap;
+    background: #191919; border: 1px solid rgba(255,255,255,.2); border-radius: 14px; -webkit-app-region: drag; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #ef4444; flex: none; animation: blink 1.2s infinite; }
+  .paused .dot { background: #f59e0b; animation: none; }
+  @keyframes blink { 50% { opacity: .35; } }
+  #timer { font: 700 14px Consolas, "Courier New", monospace; min-width: 70px; }
+  button { -webkit-app-region: no-drag; cursor: pointer; border: 0; border-radius: 9px; padding: 8px 12px; color: #fff;
+    font: 700 12px "Segoe UI", Arial, sans-serif; background: #333; }
+  button:hover { background: #444; }
+  button:disabled { opacity: .5; cursor: default; }
+  #stop { background: #D85631; }
+  #stop:hover { background: #e8663f; }
+  .compact #pause, .compact #stop { display: none; }
+  .spacer { flex: 1; }
+</style>
+</head>
+<body>
+  <div id="hud">
+    <span class="dot"></span>
+    <span id="timer">00:00:00</span>
+    <button id="pause" type="button">Pause</button>
+    <button id="stop" type="button">Stop &amp; Save</button>
+    <span class="spacer"></span>
+    <button id="toggle" type="button">Hide</button>
+  </div>
+<script>
+const { ipcRenderer } = require('electron');
+const hud = document.getElementById('hud');
+const timer = document.getElementById('timer');
+const pauseBtn = document.getElementById('pause');
+const stopBtn = document.getElementById('stop');
+const toggleBtn = document.getElementById('toggle');
+let paused = false, elapsedMs = 0, started = Date.now(), compact = false;
+
+const pad = n => String(n).padStart(2, '0');
+function render() {
+  const total = Math.floor((elapsedMs + (paused ? 0 : Date.now() - started)) / 1000);
+  timer.textContent = pad(Math.floor(total / 3600)) + ':' + pad(Math.floor(total % 3600 / 60)) + ':' + pad(total % 60);
+}
+function apply() {
+  hud.classList.toggle('paused', paused);
+  pauseBtn.textContent = paused ? 'Resume' : 'Pause';
+  render();
+}
+ipcRenderer.on('hud-init', (_e, d) => {
+  paused = !!d.paused; elapsedMs = d.elapsedMs || 0; started = Date.now();
+  compact = false; hud.classList.remove('compact'); toggleBtn.textContent = 'Hide';
+  stopBtn.disabled = false; pauseBtn.disabled = false;
+  apply();
+});
+ipcRenderer.on('hud-status', (_e, d) => {
+  paused = !!d.paused; elapsedMs = d.elapsedMs != null ? d.elapsedMs : elapsedMs; started = Date.now();
+  pauseBtn.disabled = false;
+  apply();
+});
+pauseBtn.addEventListener('click', () => { pauseBtn.disabled = true; ipcRenderer.send('hud-pause-resume'); });
+stopBtn.addEventListener('click', () => { stopBtn.disabled = true; pauseBtn.disabled = true; ipcRenderer.send('hud-stop-save'); });
+toggleBtn.addEventListener('click', () => {
+  compact = !compact;
+  hud.classList.toggle('compact', compact);
+  toggleBtn.textContent = compact ? 'Show' : 'Hide';
+  ipcRenderer.send('hud-compact', compact);
+});
+setInterval(render, 250);
+</script>
+</body>
+</html>

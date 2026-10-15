@@ -14,6 +14,7 @@ declare global {
       onRegionUpdated: (callback:(region:any)=>void) => (()=>void)|void;
       onRecordingSaved: (callback:(result:any)=>void) => (()=>void)|void;
       onRecordingStatusChange: (callback:(status:any)=>void) => (()=>void)|void;
+      onHotkeyStart?: (callback:()=>void) => (()=>void)|void;
       onRecordingError?: (callback:(error:string)=>void) => (()=>void)|void;
     };
   }

@@ -44,21 +44,29 @@ export const CaptureModeSelector: React.FC<CaptureModeSelectorProps> = ({
   const t = translations[lang];
   const [openWindows, setOpenWindows] = useState<AppWindowState[]>(fallbackWindows);
 
+  // Only poll while the "App Window" mode is open (each poll spawns PowerShell),
+  // and never while the window is hidden/minimized (e.g. during a recording).
   useEffect(() => {
+    if (captureMode !== 'window') return;
     let mounted = true;
     const refresh = async () => {
+      if (document.hidden) return;
       try {
         const api = window.electronAPI as any;
         const items = api?.getOpenWindows ? await api.getOpenWindows() : [];
-        if (!mounted) return;
-        setOpenWindows(items || []);
-        if (items?.length && !items.some((w: AppWindowState) => w.id === selectedWindowId)) setSelectedWindowId(items[0].id);
+        if (mounted) setOpenWindows(items || []);
       } catch { if (mounted) setOpenWindows([]); }
     };
     void refresh();
-    const timer = window.setInterval(refresh, 5000);
+    const timer = window.setInterval(refresh, 8000);
     return () => { mounted = false; window.clearInterval(timer); };
-  }, [selectedWindowId, setSelectedWindowId]);
+  }, [captureMode]);
+
+  // Pick a default only when nothing is selected; never silently switch the user's choice
+  // (window titles change, e.g. browser tabs).
+  useEffect(() => {
+    if (!selectedWindowId && openWindows.length) setSelectedWindowId(openWindows[0].id);
+  }, [openWindows, selectedWindowId, setSelectedWindowId]);
 
   const handleApplyPreset = (preset: AspectRatioPreset) => {
     setAspectPreset(preset);
@@ -84,7 +92,7 @@ export const CaptureModeSelector: React.FC<CaptureModeSelectorProps> = ({
     setRegion((prev) => ({ ...prev, height: safeH }));
   };
 
-  const selectedWin = openWindows.find((w) => w.id === selectedWindowId) || openWindows[0];
+  const selectedWin = openWindows.find((w) => w.id === selectedWindowId);
 
   return (
     <div className="space-y-2 w-full min-w-0">
@@ -95,10 +103,10 @@ export const CaptureModeSelector: React.FC<CaptureModeSelectorProps> = ({
         </label>
         <span className="font-mono text-[#7E7B75] text-[11px]">
           {captureMode === 'fullscreen'
-            ? '2560 × 1440'
+            ? `${Math.round(window.screen.width * window.devicePixelRatio)} × ${Math.round(window.screen.height * window.devicePixelRatio)}`
             : captureMode === 'region'
             ? `${region.width} × ${region.height}`
-            : (selectedWin?.appName || 'No window selected')}
+            : (selectedWin?.appName || selectedWindowId || 'No window selected')}
         </span>
       </div>
 
@@ -258,7 +266,10 @@ export const CaptureModeSelector: React.FC<CaptureModeSelectorProps> = ({
               onChange={(e) => setSelectedWindowId(e.target.value)}
               className="w-full bg-[#FFFFFF] border border-[#E5E2DC] text-[#1E1D1B] text-xs font-bold rounded-lg py-2.5 px-3 pr-8 outline-none appearance-none cursor-pointer truncate"
             >
-              {openWindows.length === 0 && <option value="">No open application windows found</option>}
+              {openWindows.length === 0 && !selectedWindowId && <option value="">No open application windows found</option>}
+              {selectedWindowId && !openWindows.some((w) => w.id === selectedWindowId) && (
+                <option value={selectedWindowId}>{selectedWindowId}</option>
+              )}
               {openWindows.map((win) => (
                 <option key={win.id} value={win.id}>
                   {win.icon} {win.title} ({win.width} × {win.height})
