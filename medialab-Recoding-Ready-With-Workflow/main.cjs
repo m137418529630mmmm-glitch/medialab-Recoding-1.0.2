@@ -24,8 +24,8 @@ let windowsInflight = null;
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) app.quit();
 else app.on('second-instance', () => { if (mainWin && !mainWin.isDestroyed()) { if (mainWin.isMinimized()) mainWin.restore(); mainWin.show(); mainWin.focus(); } });
-if (process.platform === 'win32') app.setAppUserModelId('com.medialab.recoding');
-const tempRoot = path.join(os.tmpdir(), `medialab-recoding-${process.pid}`);
+if (process.platform === 'win32') app.setAppUserModelId('com.medialab.recording');
+const tempRoot = path.join(os.tmpdir(), `medialab-recording-${process.pid}`);
 const preferencesPath = path.join(app.getPath('userData'), 'medialab-preferences.json');
 function logLine(message) {
   try { fs.appendFileSync(path.join(app.getPath('userData'), 'medialab.log'), `${new Date().toISOString()} ${message}\n`, 'utf8'); } catch {}
@@ -51,7 +51,7 @@ function cleanStaleTempFolders() {
   try {
     const week = 7 * 24 * 3600 * 1000;
     for (const name of fs.readdirSync(os.tmpdir())) {
-      if (!name.startsWith('medialab-recoding-') || name === path.basename(tempRoot)) continue;
+      if (!name.startsWith('medialab-recording-') || name === path.basename(tempRoot)) continue;
       const dir = path.join(os.tmpdir(), name);
       if (Date.now() - fs.statSync(dir).mtimeMs > week) fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -122,6 +122,8 @@ function createSelectionOverlay(transparent) {
     webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false }
   });
   win.setAlwaysOnTop(true, 'screen-saver');
+  // Exclude the selection surface from Windows screen capture where supported.
+  try { win.setContentProtection(true); } catch (e) { console.warn('Overlay content protection unavailable:', e.message); }
   win.loadFile(path.join(__dirname, 'overlay.html'));
   win.on('closed', () => { if (overlayWin === win) overlayWin = null; });
   return win;
@@ -217,7 +219,7 @@ $items | Sort-Object title -Unique | ConvertTo-Json -Compress
   try {
     const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], { windowsHide: true, timeout: 10000, maxBuffer: 1024 * 1024 });
     const parsed = JSON.parse(stdout.trim() || '[]');
-    return (Array.isArray(parsed) ? parsed : [parsed]).filter(w => w && w.title && w.title !== 'medialab Recoding');
+    return (Array.isArray(parsed) ? parsed : [parsed]).filter(w => w && w.title && w.title !== 'medialab recording');
   } catch (e) {
     console.warn('Could not enumerate windows:', e.message);
     return [];
@@ -288,29 +290,100 @@ function buildVideoFilter(opts) {
   const H = `'if(gte(iw,ih),${short},${long})'`;
   return `scale=${W}:${H}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=fast_bilinear,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=black`;
 }
+let cachedMicDevice = null;
+async function findMicrophoneDevice(exe) {
+  if (cachedMicDevice) return cachedMicDevice;
+  if (process.platform !== 'win32') throw new Error('Microphone capture through DirectShow is available on Windows only.');
+  let output = '';
+  try {
+    await execFileAsync(exe, ['-hide_banner', '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'], {
+      windowsHide: true, timeout: 6000, maxBuffer: 1024 * 1024
+    });
+  } catch (error) {
+    output = `${error.stderr || ''}\n${error.stdout || ''}`;
+  }
+  const devices = [...output.matchAll(/"([^"]+)"\s+\(audio\)/gi)].map(match => match[1]);
+  if (!devices.length) throw new Error('No DirectShow microphone device was found.');
+  cachedMicDevice = devices[0];
+  return cachedMicDevice;
+}
+
 async function startSegment() {
   fs.mkdirSync(tempRoot, { recursive: true });
   const seg = path.join(tempRoot, `segment-${segmentIndex++}.mkv`);
   const crf = recordingOptions.sharpness === 'ultra' ? '18' : recordingOptions.sharpness === 'high' ? '21' : '25';
-  // `ultrafast` keeps CPU usage lowest. Slower presets give much smaller recordings at the same quality:
-  // set "encoderPreset": "veryfast" (about 3-4x smaller, more CPU) in medialab-preferences.json to try it.
   const prefPreset = readPreferences().encoderPreset;
   const preset = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast'].includes(prefPreset) ? prefPreset : 'ultrafast';
-  const args = [...buildInputArgs(recordingOptions), '-vf', buildVideoFilter(recordingOptions),
-    '-r', String(recordingOptions.fps || 30), '-c:v', 'libx264', '-preset', preset, ...(preset === 'ultrafast' ? ['-tune', 'zerolatency'] : []),
-    '-crf', crf, '-pix_fmt', 'yuv420p', '-f', 'matroska', '-y', seg];
   const exe = resolveFfmpeg();
-  // Force DPI awareness so gdigrab works in physical pixels on 125%/150% displays.
-  const child = spawn(exe, args, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'], env: { ...process.env, __COMPAT_LAYER: 'HIGHDPIAWARE' } });
-  ffmpeg = child;
-  let stderr = '';
-  child.stderr.on('data', d => { stderr = (stderr + d.toString()).slice(-6000); });
-  child.on('error', e => send('recording-error', e.message));
-  child.on('close', code => {
-    if (!child.intentionalStop && active && !paused && code !== 0) send('recording-error', `FFmpeg stopped unexpectedly (${code}). ${stderr.slice(-1200)}`);
-  });
-  await new Promise(resolve => setTimeout(resolve, 350));
-  if (child.exitCode !== null) { if (ffmpeg === child) ffmpeg = null; throw new Error(`FFmpeg failed to start recording. ${stderr.slice(-1500)}`); }
+
+  const launch = async (withAudio) => {
+    const args = buildInputArgs(recordingOptions);
+    let audioCount = 0;
+    if (withAudio && recordingOptions._captureSystemAudio) {
+      args.push('-thread_queue_size', '256', '-f', 'wasapi', '-loopback', '1', '-i', 'default');
+      audioCount++;
+    }
+    if (withAudio && recordingOptions._captureMicAudio) {
+      const micDevice = await findMicrophoneDevice(exe);
+      args.push('-thread_queue_size', '256', '-f', 'dshow', '-i', `audio=${micDevice}`);
+      audioCount++;
+    }
+    args.push('-vf', buildVideoFilter(recordingOptions), '-r', String(recordingOptions.fps || 30),
+      '-c:v', 'libx264', '-preset', preset, ...(preset === 'ultrafast' ? ['-tune', 'zerolatency'] : []),
+      '-crf', crf, '-pix_fmt', 'yuv420p');
+    if (audioCount === 1) {
+      args.push('-map', '0:v:0', '-map', '1:a:0?', '-c:a', 'aac', '-b:a', '192k');
+    } else if (audioCount > 1) {
+      const audioLabels = [];
+      let inputIndex = 1;
+      if (recordingOptions._captureSystemAudio) audioLabels.push(`[${inputIndex++}:a]`);
+      if (recordingOptions._captureMicAudio) audioLabels.push(`[${inputIndex}:a]`);
+      args.push('-filter_complex', `${audioLabels.join('')}amix=inputs=${audioCount}:duration=longest:dropout_transition=2[aout]`,
+        '-map', '0:v:0', '-map', '[aout]', '-c:a', 'aac', '-b:a', '192k');
+    }
+    args.push('-f', 'matroska', '-y', seg);
+    const child = spawn(exe, args, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'], env: { ...process.env, __COMPAT_LAYER: 'HIGHDPIAWARE' } });
+    ffmpeg = child;
+    let stderr = '';
+    child.stderr.on('data', d => { stderr = (stderr + d.toString()).slice(-6000); });
+    child.on('error', e => send('recording-error', e.message));
+    child.on('close', code => {
+      if (!child.intentionalStop && active && !paused && code !== 0) send('recording-error', `FFmpeg stopped unexpectedly (${code}). ${stderr.slice(-1200)}`);
+    });
+    await new Promise(resolve => setTimeout(resolve, 650));
+    if (child.exitCode !== null) {
+      if (ffmpeg === child) ffmpeg = null;
+      throw new Error(`FFmpeg failed to start recording. ${stderr.slice(-1500)}`);
+    }
+    return child;
+  };
+
+  const requestedSystem = Boolean(recordingOptions.systemAudio);
+  const requestedMic = Boolean(recordingOptions.micAudio);
+  const attempts = [];
+  if (requestedSystem && requestedMic) attempts.push({ systemAudio: true, micAudio: true }, { systemAudio: false, micAudio: true }, { systemAudio: true, micAudio: false });
+  else if (requestedSystem) attempts.push({ systemAudio: true, micAudio: false });
+  else if (requestedMic) attempts.push({ systemAudio: false, micAudio: true });
+  attempts.push({ systemAudio: false, micAudio: false });
+  let lastError = null;
+  for (const attempt of attempts) {
+    recordingOptions._captureSystemAudio = attempt.systemAudio;
+    recordingOptions._captureMicAudio = attempt.micAudio;
+    try {
+      await launch(attempt.systemAudio || attempt.micAudio);
+      if (attempt.systemAudio !== requestedSystem || attempt.micAudio !== requestedMic) {
+        logLine(`Audio fallback active: system=${attempt.systemAudio}, microphone=${attempt.micAudio}`);
+        send('recording-error', 'Some audio inputs could not be opened. Recording continued with the available audio and video.');
+      }
+      lastError = null;
+      break;
+    } catch (error) {
+      lastError = error;
+      logLine(`Audio/video capture attempt failed (system=${attempt.systemAudio}, mic=${attempt.micAudio}): ${error.message}`);
+      if (!requestedSystem && !requestedMic) break;
+    }
+  }
+  if (lastError) throw lastError;
   segments.push(seg);
 }
 async function pauseCapture() {
@@ -397,7 +470,7 @@ async function stopCapture() {
         const args = [
           '-hide_banner', '-loglevel', 'warning',
           '-f', 'concat', '-safe', '0', '-i', listPath,
-          '-map', '0:v:0', '-c:v', 'copy',
+          '-map', '0:v:0', '-map', '0:a?', '-c:v', 'copy', '-c:a', 'copy',
           ...(ext === 'mkv' ? [] : ['-movflags', '+faststart']),
           '-y', output
         ];
@@ -432,7 +505,7 @@ function createMainWindow() {
   mainWin = new BrowserWindow({
     width: 600, height: 740, minWidth: 540, minHeight: 640, maxWidth: 760,
     useContentSize: true, center: true, maximizable: false,
-    title: 'medialab Recoding', icon: path.join(__dirname, 'dist', 'recording_icon_transparent.ico'),
+    title: 'medialab recording', icon: path.join(__dirname, 'dist', 'recording_icon_transparent.ico'),
     autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false }
   });
@@ -443,7 +516,7 @@ function createMainWindow() {
     e.preventDefault();
     const choice = dialog.showMessageBoxSync(mainWin, {
       type: 'question', buttons: ['Stop & Save', 'Keep recording'], defaultId: 0, cancelId: 1,
-      title: 'medialab Recoding', message: 'A recording is in progress.', detail: 'Stop and save it before closing?'
+      title: 'medialab recording', message: 'A recording is in progress.', detail: 'Stop and save it before closing?'
     });
     if (choice === 0) stopCapture().catch(() => {}).finally(() => { if (mainWin && !mainWin.isDestroyed()) mainWin.close(); });
   });
@@ -472,7 +545,7 @@ app.whenReady().then(() => {
   createMainWindow();
   try { registerHotkeys(); } catch (e) { console.warn('Hotkeys unavailable:', e.message); }
   app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createMainWindow(); });
-}).catch(e => { dialog.showErrorBox('medialab Recoding startup error', e.stack || e.message); app.quit(); });
+}).catch(e => { dialog.showErrorBox('medialab recording startup error', e.stack || e.message); app.quit(); });
 app.on('before-quit', () => { if (ffmpeg) { try { ffmpeg.stdin.write('q\n'); } catch {} } });
 app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch {} });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

@@ -1,18 +1,43 @@
-// Runs after electron-builder packs the app (before the installer is built).
-// Chromium ships ~55 locale files (~40 MB); this app only needs English (required fallback) and Arabic.
+// Reduce the packaged Electron runtime after electron-builder has copied the app.
 const fs = require('fs');
 const path = require('path');
-const KEEP = new Set(['en-US.pak', 'ar.pak']);
-exports.default = async function afterPack(context) {
-  const dir = path.join(context.appOutDir, 'locales');
-  if (!fs.existsSync(dir)) return;
-  let removed = 0, bytes = 0;
-  for (const name of fs.readdirSync(dir)) {
-    if (!name.endsWith('.pak') || KEEP.has(name)) continue;
-    const file = path.join(dir, name);
-    bytes += fs.statSync(file).size;
-    fs.rmSync(file, { force: true });
-    removed++;
+
+const KEEP_LOCALES = new Set(['en-US.pak', 'ar.pak']);
+function removeIfFile(file) {
+  try {
+    if (fs.existsSync(file) && fs.statSync(file).isFile()) fs.rmSync(file, { force: true });
+  } catch (error) {
+    console.warn(`afterPack: unable to remove ${file}: ${error.message}`);
   }
-  console.log(`  • afterPack: removed ${removed} unused locale files (${(bytes / 1048576).toFixed(1)} MB)`);
+}
+exports.default = async function afterPack(context) {
+  const resources = path.join(context.appOutDir, 'locales');
+  let removedLocales = 0;
+  if (fs.existsSync(resources)) {
+    for (const name of fs.readdirSync(resources)) {
+      if (name.endsWith('.pak') && !KEEP_LOCALES.has(name)) {
+        removeIfFile(path.join(resources, name));
+        removedLocales++;
+      }
+    }
+  }
+
+  let removedFiles = 0;
+  const walk = (dir) => {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (
+        entry.name.toLowerCase() === 'licenses.chromium.html' ||
+        entry.name.toLowerCase().endsWith('.pdb') ||
+        entry.name.toLowerCase().endsWith('.map')
+      ) {
+        removeIfFile(full);
+        removedFiles++;
+      }
+    }
+  };
+  walk(context.appOutDir);
+  console.log(`afterPack: removed ${removedLocales} unused locales and ${removedFiles} debug/license files.`);
 };

@@ -6,6 +6,7 @@ import {defineConfig} from 'vite';
 export default defineConfig(() => {
   return {
     base: './',
+    build: { sourcemap: false, minify: 'esbuild', chunkSizeWarningLimit: 1000 },
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

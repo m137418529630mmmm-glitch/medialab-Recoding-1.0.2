@@ -126,7 +126,7 @@ export const LiveRecordingOverlay: React.FC<LiveRecordingOverlayProps> = ({
       {/* Recording boundary frame */}
       {captureMode === 'region' ? (
         <div
-          className="absolute rounded-xl border-2 border-dashed border-[#D85631] shadow-[0_0_25px_rgba(216,86,49,0.3)] pointer-events-none transition-all duration-200"
+          className="absolute rounded-xl border-[3px] border-solid border-[#000000] shadow-none pointer-events-none transition-all duration-200"
           style={{
             left: `${Math.max(20, Math.min(window.innerWidth - 300, region.x / 2))}px`,
             top: `${Math.max(20, Math.min(window.innerHeight - 200, region.y / 2))}px`,
@@ -134,7 +134,7 @@ export const LiveRecordingOverlay: React.FC<LiveRecordingOverlayProps> = ({
             height: `${Math.min(window.innerHeight - 100, region.height / 2)}px`,
           }}
         >
-          <div className="absolute -top-6 right-0 bg-[#D85631] text-white font-mono text-[10px] font-bold px-2 py-0.5 rounded shadow">
+          <div className="absolute -top-6 right-0 bg-black text-white font-mono text-[10px] font-bold px-2 py-0.5 rounded shadow-none">
             REC {region.width} × {region.height} px
           </div>
           <span className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-white border border-[#D85631] rounded-sm" />

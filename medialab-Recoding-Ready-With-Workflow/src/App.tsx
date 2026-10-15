@@ -92,7 +92,6 @@ export default function App() {
     const defaults: ToggleSettings = {
       hideCursor: true,
       highlightClicks: false,
-      // Audio capture is not implemented in the FFmpeg pipeline yet, so these stay off.
       systemAudio: false,
       micAudio: false,
       countdown3s: true,
@@ -105,8 +104,6 @@ export default function App() {
     return {
       ...defaults,
       ...(initialConfig?.toggles || {}),
-      systemAudio: false,
-      micAudio: false,
     };
   });
 
@@ -241,6 +238,8 @@ export default function App() {
         fps,
         sharpness,
         hideCursor: toggles.hideCursor,
+        systemAudio: toggles.systemAudio,
+        micAudio: toggles.micAudio,
         format: storage.format,
         savePath: storage.savePath,
         currentIndex: storage.currentIndex,

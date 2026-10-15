@@ -1,4 +1,4 @@
-# medialab Recoding
+# medialab recording
 
 Electron + React + Vite desktop screen recorder for Windows. The renderer is built into `dist/`; the Electron main process records with `ffmpeg-static` and Windows `gdigrab`.
 
