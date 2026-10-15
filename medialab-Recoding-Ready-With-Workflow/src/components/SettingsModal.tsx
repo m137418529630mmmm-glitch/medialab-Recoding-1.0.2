@@ -154,13 +154,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
 
             <div
-              aria-disabled="true"
-              className="p-3 rounded-xl border border-[#E5E2DC] bg-[#FFFFFF] hover:border-[#D5D2CB] transition-colors cursor-not-allowed opacity-60 flex items-center justify-between"
+              onClick={() => handleToggle('systemAudio')}
+              className="p-3 rounded-xl border border-[#E5E2DC] bg-[#FFFFFF] hover:border-[#D5D2CB] transition-colors cursor-pointer flex items-center justify-between"
             >
               <div className="flex items-center gap-2.5">
                 <Volume2 className="w-4 h-4 text-[#7E7B75]" />
                 <span className="text-xs font-bold text-[#1E1D1B]">{t.systemAudio}</span>
-                <span className="text-[10px] font-bold text-[#D85631] bg-[#F4F3F0] border border-[#E5E2DC] rounded px-1.5 py-0.5">{t.comingSoon}</span>
               </div>
               <div
                 className={`w-9 h-5 flex items-center rounded-full p-0.5 transition-colors ${
@@ -176,13 +175,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
 
             <div
-              aria-disabled="true"
-              className="p-3 rounded-xl border border-[#E5E2DC] bg-[#FFFFFF] hover:border-[#D5D2CB] transition-colors cursor-not-allowed opacity-60 flex items-center justify-between"
+              onClick={() => handleToggle('micAudio')}
+              className="p-3 rounded-xl border border-[#E5E2DC] bg-[#FFFFFF] hover:border-[#D5D2CB] transition-colors cursor-pointer flex items-center justify-between"
             >
               <div className="flex items-center gap-2.5">
                 <Mic className="w-4 h-4 text-[#7E7B75]" />
                 <span className="text-xs font-bold text-[#1E1D1B]">{t.micAudio}</span>
-                <span className="text-[10px] font-bold text-[#D85631] bg-[#F4F3F0] border border-[#E5E2DC] rounded px-1.5 py-0.5">{t.comingSoon}</span>
               </div>
               <div
                 className={`w-9 h-5 flex items-center rounded-full p-0.5 transition-colors ${

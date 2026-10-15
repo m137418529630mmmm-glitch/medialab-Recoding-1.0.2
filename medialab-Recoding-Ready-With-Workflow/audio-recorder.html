@@ -1,0 +1,73 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>medialab audio recorder</title></head>
+<body>
+<script>
+// Hidden helper window. Records "system sound" (Chromium loopback) and/or the microphone,
+// mixes them in an AudioContext (continuous timeline, even when nothing is playing) and streams
+// Opus/WebM chunks to the main process, which aligns and muxes them with the video.
+const { ipcRenderer } = require('electron');
+let ctx = null, recorder = null, inputs = [], pending = [];
+
+function cleanup() {
+  inputs.forEach(s => s.getTracks().forEach(t => { try { t.stop(); } catch {} }));
+  inputs = [];
+  if (ctx) { ctx.close().catch(() => {}); ctx = null; }
+}
+const msg = e => (e && e.message) || String(e);
+
+async function startCapture(cfg) {
+  const problems = [];
+  try {
+    ctx = new AudioContext({ sampleRate: 48000 });
+    await ctx.resume();
+    const dest = ctx.createMediaStreamDestination();
+    if (cfg.system) {
+      try {
+        // The main process answers this request with the screen + 'loopback' audio.
+        const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 1 }, audio: true });
+        s.getVideoTracks().forEach(t => t.stop()); // only the sound is needed
+        if (s.getAudioTracks().length) {
+          ctx.createMediaStreamSource(new MediaStream(s.getAudioTracks())).connect(dest);
+          inputs.push(s);
+        } else problems.push('system sound is not available');
+      } catch (e) { problems.push('system sound: ' + msg(e)); }
+    }
+    if (cfg.mic) {
+      try {
+        const m = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+        ctx.createMediaStreamSource(m).connect(dest);
+        inputs.push(m);
+      } catch (e) { problems.push('microphone: ' + msg(e)); }
+    }
+    if (!inputs.length) { cleanup(); return { ok: false, problems }; }
+    const mime = ['audio/webm;codecs=opus', 'audio/webm'].find(t => MediaRecorder.isTypeSupported(t));
+    recorder = new MediaRecorder(dest.stream, mime ? { mimeType: mime, audioBitsPerSecond: 192000 } : {});
+    recorder.ondataavailable = e => {
+      if (e.data && e.data.size) pending.push(e.data.arrayBuffer().then(b => ipcRenderer.send('audio-chunk', Buffer.from(b))));
+    };
+    const startedAt = await new Promise(resolve => { recorder.onstart = () => resolve(Date.now()); recorder.start(500); });
+    return { ok: true, startedAt, problems };
+  } catch (e) {
+    cleanup();
+    return { ok: false, problems: [msg(e)] };
+  }
+}
+
+function stopCapture() {
+  return new Promise(resolve => {
+    const finish = async () => {
+      try { await Promise.all(pending); } catch {}
+      pending = [];
+      cleanup();
+      ipcRenderer.send('audio-done'); // arrives after every chunk (same channel, ordered)
+      resolve(true);
+    };
+    if (!recorder || recorder.state === 'inactive') { finish(); return; }
+    recorder.onstop = finish;
+    recorder.stop();
+  });
+}
+</script>
+</body>
+</html>

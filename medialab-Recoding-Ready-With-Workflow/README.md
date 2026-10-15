@@ -1,4 +1,4 @@
-# medialab recording
+# medialab Recording
 
 Electron + React + Vite desktop screen recorder for Windows. The renderer is built into `dist/`; the Electron main process records with `ffmpeg-static` and Windows `gdigrab`.
 
@@ -18,7 +18,7 @@ Electron + React + Vite desktop screen recorder for Windows. The renderer is bui
 - File names: sequential (`prefix + N`) or date-based (`recording_YYYY-MM-DD[_2].ext`) when sequential numbering is off.
 
 ## Known limitations
-- Audio capture (system/microphone) is not implemented yet; the toggles are disabled ("Coming soon"). Click highlighting and snapshots are not implemented either.
+- Audio: system sound + microphone (Settings). Click highlighting and snapshots are not implemented.
 - `gdigrab` cannot capture some hardware-accelerated windows (they may record black) in "App Window" mode.
 - Windows content-protection flags (used to hide the HUD/frame from the recording) are best-effort. Verify on the target Windows version that the HUD/frame is absent in the final video.
 - `ffmpeg-static` ships a GPL build of FFmpeg; check the license obligations before distributing the installer.

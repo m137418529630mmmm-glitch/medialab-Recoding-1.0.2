@@ -1,7 +1,7 @@
 {
-  "name": "medialab-recording",
+  "name": "medialab-recoding",
   "version": "1.0.0",
-  "description": "medialab recording - Windows screen recorder (Electron + React + FFmpeg)",
+  "description": "medialab Recording - Windows screen recorder (Electron + React + FFmpeg)",
   "author": "medialab",
   "private": true,
   "type": "module",
@@ -35,14 +35,15 @@
     "vite": "^6.2.0"
   },
   "build": {
-    "appId": "com.medialab.recording",
-    "productName": "medialab recording",
+    "appId": "com.medialab.recoding",
+    "productName": "medialab Recording",
     "files": [
       "dist/**/*",
       "main.cjs",
       "preload.cjs",
       "overlay.html",
       "hud.html",
+      "audio-recorder.html",
       "package.json"
     ],
     "asarUnpack": [
@@ -63,15 +64,10 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "medialab recording",
+      "shortcutName": "medialab Recording",
       "differentialPackage": false
     },
     "compression": "maximum",
-    "afterPack": "scripts/after-pack.cjs",
-    "asar": true,
-    "electronLanguages": [
-      "en-US",
-      "ar"
-    ]
+    "afterPack": "scripts/after-pack.cjs"
   }
 }

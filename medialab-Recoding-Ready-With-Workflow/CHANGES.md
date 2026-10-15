@@ -39,3 +39,10 @@
 - **Installer / install size**: unused Chromium locales removed after packing (`scripts/after-pack.cjs`, keeps en-US + ar); bundled fonts limited to the Arabic + Latin subsets. Most of the remaining size is the Electron runtime and FFmpeg.
 - Closing the window during a recording now asks to Stop & Save (previously the raw segments were left in the temp folder).
 - Leftover temp folders from failed sessions are deleted after 7 days.
+
+# Round 4
+
+- **Name**: visible name is now "medialab Recording" (window, installer, shortcut, workflow). Internal ids (package name, appId) are unchanged on purpose, so saved settings and upgrades keep working. Uninstall the old "medialab Recoding" first.
+- **Audio**: system sound (everything playing through the speakers/headphones) and microphone. Recorded in a hidden window as Opus, aligned to each video segment (pauses are cut out), merged into the final file as AAC 192k. Video is still stream-copied (fast Stop & Save). If audio fails the video is still saved and a message explains why. Alignment values are written to `medialab.log`.
+- **Black frame**: in region mode, four thin solid-black windows are drawn just outside the recorded area (never inside it), click-through and excluded from capture.
+- **Size**: the GitHub build now prints the installed size and the 15 biggest files, so the real contributors can be targeted. Tauri/other-framework port: not done (it would change features and cannot be built/tested here).

@@ -92,7 +92,7 @@ export default function App() {
     const defaults: ToggleSettings = {
       hideCursor: true,
       highlightClicks: false,
-      systemAudio: false,
+      systemAudio: true,
       micAudio: false,
       countdown3s: true,
       countdownDuration: 3,
@@ -101,9 +101,13 @@ export default function App() {
       autoStopMinutes: 5,
       autoStopSeconds: 0,
     };
+    // One-time migration: audio used to be disabled ("coming soon"), so old saved settings have it off.
+    let audioMigrated = true;
+    try { audioMigrated = localStorage.getItem('medialab-audio-v2') === '1'; } catch {}
     return {
       ...defaults,
       ...(initialConfig?.toggles || {}),
+      ...(audioMigrated ? {} : { systemAudio: true, micAudio: false }),
     };
   });
 
@@ -119,6 +123,10 @@ export default function App() {
     }
   );
   const [nativePreferencesLoaded, setNativePreferencesLoaded] = useState(!window.electronAPI);
+
+  useEffect(() => {
+    try { localStorage.setItem('medialab-audio-v2', '1'); } catch {}
+  }, []);
 
   // Synchronize format with storage
   useEffect(() => {

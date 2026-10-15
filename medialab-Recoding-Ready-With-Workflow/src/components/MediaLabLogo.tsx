@@ -9,7 +9,7 @@ export const MediaLabLogo: React.FC<MediaLabLogoProps> = ({
 }) => (
   <img
     src="./mediaLab_publishing_transparent.png"
-    alt="medialab recording"
+    alt="medialab Recording"
     draggable={false}
     className={`${className} object-contain select-none pointer-events-none`}
   />
