@@ -46,3 +46,12 @@
 - **Audio**: system sound (everything playing through the speakers/headphones) and microphone. Recorded in a hidden window as Opus, aligned to each video segment (pauses are cut out), merged into the final file as AAC 192k. Video is still stream-copied (fast Stop & Save). If audio fails the video is still saved and a message explains why. Alignment values are written to `medialab.log`.
 - **Black frame**: in region mode, four thin solid-black windows are drawn just outside the recorded area (never inside it), click-through and excluded from capture.
 - **Size**: the GitHub build now prints the installed size and the 15 biggest files, so the real contributors can be targeted. Tauri/other-framework port: not done (it would change features and cannot be built/tested here).
+
+# Round 5 (found by analysing a real recording)
+
+- **First seconds of audio were missing** (3.1 s of silence): opening the system-audio device takes ~3 s while the video had already started. The devices are now opened ahead of time (during the countdown, or while the app window hides) and the recording is only begun when the video starts.
+- **App window visible at the start of the video** (~4 s): the window is now hidden first (opacity 0, then minimize, then a short wait) and only then does the video start. The control bar shows "Starting..." until recording really begins.
+- **Control bar visible inside the recording**: transparent (layered) windows ignore the "exclude from capture" flag, so the bar is now an opaque window.
+- **Black frame too thick**: Windows has a minimum size for windows, so four thin windows ended up 30+ px thick. It is now ONE window shaped like a hollow 3 px ring, just outside the recorded area.
+- **System sound is captured raw** (echo cancellation / noise suppression / auto gain explicitly off); these processors dull and pump the sound.
+- `tools/sync-test.html`: flashes the screen and beeps together once a second for 20 s. Record it, and the exact audio offset can be measured.

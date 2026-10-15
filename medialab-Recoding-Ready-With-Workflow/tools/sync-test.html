@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>medialab Recording - audio/video sync test</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;color:#fff;font-family:Segoe UI,Arial,sans-serif;overflow:hidden}
+  #flash{position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none}
+  #ui{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center}
+  button{font-size:26px;padding:16px 36px;border:0;border-radius:12px;background:#D85631;color:#fff;cursor:pointer}
+  #count{font-size:120px;font-weight:800;font-family:Consolas,monospace}
+  p{max-width:720px;opacity:.8;font-size:18px;margin:0}
+</style>
+</head>
+<body>
+<div id="ui">
+  <button id="go">Start the test</button>
+  <div id="count"></div>
+  <p>Start your recording (full screen or a region around this page, with system audio ON), then press the button.
+     The screen flashes white and a short beep plays at the same moment, once per second, for 20 seconds.
+     Stop the recording after the test and send me the video.</p>
+</div>
+<div id="flash"></div>
+<script>
+const flash = document.getElementById('flash'), count = document.getElementById('count');
+document.getElementById('go').onclick = async () => {
+  document.querySelector('button').style.display = 'none';
+  document.querySelector('p').style.display = 'none';
+  const ctx = new AudioContext(); await ctx.resume();
+  const t0 = ctx.currentTime + 2.0;           // first beep in 2 s
+  const lat = (ctx.outputLatency || ctx.baseLatency || 0);
+  for (let k = 0; k < 20; k++) {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.value = 1000; o.connect(g); g.connect(ctx.destination);
+    g.gain.setValueAtTime(0, t0 + k); g.gain.linearRampToValueAtTime(0.8, t0 + k + 0.005);
+    g.gain.setValueAtTime(0.8, t0 + k + 0.08); g.gain.linearRampToValueAtTime(0, t0 + k + 0.09);
+    o.start(t0 + k); o.stop(t0 + k + 0.1);
+  }
+  let last = -1;
+  (function loop() {
+    const t = ctx.currentTime - lat - t0;      // time since the first beep (compensating output latency)
+    const k = Math.floor(t);
+    count.textContent = t < 0 ? Math.ceil(-t) : (k < 20 ? String(k + 1) : 'done');
+    const phase = t - k;
+    flash.style.opacity = (t >= 0 && k < 20 && phase < 0.09) ? 1 : 0;
+    if (t < 21) requestAnimationFrame(loop);
+  })();
+};
+</script>
+</body>
+</html>

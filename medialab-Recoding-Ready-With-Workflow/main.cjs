@@ -20,6 +20,9 @@ let audioFile = null;
 let audioStartedAt = 0;
 let audioActive = false;
 let frameWins = [];
+let audioPrep = null; // { key, promise, timer } audio devices opened ahead of time (during the countdown)
+let starting = false;
+let startingPromise = null;
 let segmentIndex = 0;
 let recordingOptions = null;
 let startedAt = 0;
@@ -89,6 +92,18 @@ function closeOverlay() {
   if (overlayWin && !overlayWin.isDestroyed()) overlayWin.destroy();
   overlayWin = null;
 }
+async function hideMainWindowForCapture() {
+  // Opacity 0 hides it instantly (no minimize animation, no lag), then minimize and let it settle.
+  if (!mainWin || mainWin.isDestroyed()) return;
+  try { mainWin.setOpacity(0); } catch {}
+  if (!mainWin.isMinimized()) mainWin.minimize();
+  await sleep(450);
+}
+function showMainWindow() {
+  if (!mainWin || mainWin.isDestroyed()) return;
+  try { mainWin.setOpacity(1); } catch {}
+  mainWin.show(); mainWin.restore(); mainWin.focus();
+}
 function closeHud() {
   closeFrame();
   if (hudWin && !hudWin.isDestroyed()) hudWin.destroy();
@@ -126,37 +141,58 @@ function configureAudioSession() {
 }
 async function discardAudio() {
   audioActive = false;
+  if (audioPrep) { clearTimeout(audioPrep.timer); audioPrep = null; }
   try { if (audioWin && !audioWin.isDestroyed()) audioWin.destroy(); } catch {}
   audioWin = null;
   try { if (audioStream) audioStream.destroy(); } catch {}
   audioStream = null;
   try { if (audioFile) fs.rmSync(audioFile, { force: true }); } catch {}
 }
-async function startAudioCapture(opts) {
-  try {
-    fs.mkdirSync(tempRoot, { recursive: true });
-    audioFile = path.join(tempRoot, 'audio.webm');
-    audioStream = fs.createWriteStream(audioFile);
-    audioWin = new BrowserWindow({
-      show: false, width: 320, height: 200,
-      webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false, backgroundThrottling: false, autoplayPolicy: 'no-user-gesture-required', partition: 'medialab-audio' }
-    });
-    await audioWin.loadFile(path.join(__dirname, 'audio-recorder.html'));
-    // userGesture=true: getDisplayMedia() requires a user gesture.
-    const result = await withTimeout(
-      audioWin.webContents.executeJavaScript(`startCapture(${JSON.stringify({ system: !!opts.systemAudio, mic: !!opts.micAudio })})`, true),
-      15000, 'timed out while opening the audio devices');
-    if (!result || !result.ok) throw new Error((result && result.problems && result.problems.join('; ')) || 'no audio source available');
-    audioStartedAt = result.startedAt;
-    if (result.problems && result.problems.length) send('recording-error', 'Audio: ' + result.problems.join('; '));
-    return true;
-  } catch (e) {
-    logLine('Audio start failed: ' + e.message);
-    send('recording-error', `Audio could not be started (${e.message}). Recording continues without sound.`);
-    await discardAudio();
-    return false;
-  }
+const audioKey = o => `${!!o.systemAudio}|${!!o.micAudio}`;
+// Opening the audio devices takes 1-3 s. It is done ahead of time (during the countdown when there is one)
+// and the actual recording is only "begun" when the video starts, so the first seconds are not lost.
+function prepareAudio(opts) {
+  if (!opts || (!opts.systemAudio && !opts.micAudio)) return Promise.resolve(false);
+  const key = audioKey(opts);
+  if (audioPrep && audioPrep.key === key) return audioPrep.promise;
+  discardAudio();
+  const entry = { key, timer: null, promise: null };
+  entry.promise = (async () => {
+    try {
+      fs.mkdirSync(tempRoot, { recursive: true });
+      audioFile = path.join(tempRoot, 'audio.webm');
+      audioStream = fs.createWriteStream(audioFile);
+      audioWin = new BrowserWindow({
+        show: false, width: 320, height: 200,
+        webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false, backgroundThrottling: false, autoplayPolicy: 'no-user-gesture-required', partition: 'medialab-audio' }
+      });
+      await audioWin.loadFile(path.join(__dirname, 'audio-recorder.html'));
+      // userGesture=true: getDisplayMedia() requires a user gesture.
+      const result = await withTimeout(
+        audioWin.webContents.executeJavaScript(`prepareCapture(${JSON.stringify({ system: !!opts.systemAudio, mic: !!opts.micAudio })})`, true),
+        15000, 'timed out while opening the audio devices');
+      if (!result || !result.ok) throw new Error((result && result.problems && result.problems.join('; ')) || 'no audio source available');
+      if (result.problems && result.problems.length) send('recording-error', 'Audio: ' + result.problems.join('; '));
+      return true;
+    } catch (e) {
+      logLine('Audio start failed: ' + e.message);
+      send('recording-error', `Audio could not be started (${e.message}). Recording continues without sound.`);
+      await discardAudio();
+      return false;
+    }
+  })();
+  // Never keep the devices open forever if the recording is cancelled.
+  entry.timer = setTimeout(() => { if (!active && audioPrep === entry) discardAudio(); }, 90000);
+  audioPrep = entry;
+  return entry.promise;
 }
+async function beginAudio() {
+  const at = await withTimeout(audioWin.webContents.executeJavaScript('beginRecording()', true), 5000, 'could not start the audio recorder');
+  audioStartedAt = at;
+  audioActive = true;
+}
+ipcMain.handle('prepare-audio', (_e, opts) => { if (!active) prepareAudio(opts); return true; });
+ipcMain.handle('cancel-audio-prepare', () => { if (!active) discardAudio(); return true; });
 ipcMain.on('audio-chunk', (_e, data) => { if (audioStream) audioStream.write(Buffer.from(data)); });
 async function stopAudioCapture() {
   let ok = false;
@@ -173,6 +209,7 @@ async function stopAudioCapture() {
   try { if (audioWin && !audioWin.isDestroyed()) audioWin.destroy(); } catch {}
   audioWin = null;
   audioActive = false;
+  if (audioPrep) { clearTimeout(audioPrep.timer); audioPrep = null; }
   return ok;
 }
 
@@ -227,27 +264,34 @@ function closeFrame() {
 function showRegionFrame(region) {
   closeFrame();
   if (!region) return;
-  const t = 4, gap = 1; // thickness / gap to the recorded area (DIP)
-  const r = region;
-  const rects = [
-    { x: r.x - gap - t, y: r.y - gap - t, width: r.width + 2 * (gap + t), height: t },
-    { x: r.x - gap - t, y: r.y + r.height + gap, width: r.width + 2 * (gap + t), height: t },
-    { x: r.x - gap - t, y: r.y - gap, width: t, height: r.height + 2 * gap },
-    { x: r.x + r.width + gap, y: r.y - gap, width: t, height: r.height + 2 * gap }
+  // ONE black window slightly larger than the region, shaped like a hollow rectangle (only a thin ring is
+  // drawn / hit-tested). Thin separate windows cannot be made thinner than Windows' minimum window size.
+  const t = 3, gap = 1, pad = t + gap;
+  const b = { x: region.x - pad, y: region.y - pad, width: region.width + 2 * pad, height: region.height + 2 * pad };
+  const W = b.width, H = b.height;
+  const ring = [
+    { x: 0, y: 0, width: W, height: t }, { x: 0, y: H - t, width: W, height: t },
+    { x: 0, y: 0, width: t, height: H }, { x: W - t, y: 0, width: t, height: H }
   ];
-  frameWins = rects.map(b => {
-    const w = new BrowserWindow({
-      ...b, frame: false, thickFrame: false, transparent: false, backgroundColor: '#000000', resizable: false, movable: false,
-      minimizable: false, maximizable: false, fullscreenable: false, focusable: false, skipTaskbar: true, alwaysOnTop: true,
-      hasShadow: false, show: false, minWidth: 1, minHeight: 1, webPreferences: { sandbox: true }
-    });
+  const w = new BrowserWindow({
+    ...b, frame: false, thickFrame: false, transparent: false, backgroundColor: '#000000', resizable: false, movable: false,
+    minimizable: false, maximizable: false, fullscreenable: false, focusable: false, skipTaskbar: true, alwaysOnTop: true,
+    hasShadow: false, show: false, webPreferences: { sandbox: true }
+  });
+  frameWins = [w];
+  if (typeof w.setShape !== 'function') { closeFrame(); return; } // without the hollow shape it would cover the region
+  try {
     w.setAlwaysOnTop(true, 'screen-saver');
     w.setIgnoreMouseEvents(true);
-    try { w.setContentProtection(true); } catch {}
     w.setBounds(b);
-    w.loadURL('data:text/html,<body style="margin:0;background:%23000"></body>');
-    w.once('ready-to-show', () => { if (!w.isDestroyed()) { w.setBounds(b); w.showInactive(); } });
-    return w;
+    w.setShape(ring);
+    try { w.setContentProtection(true); } catch {}
+  } catch (e) { logLine('Region frame unavailable: ' + e.message); closeFrame(); return; }
+  w.loadURL('data:text/html,<body style="margin:0;background:%23000"></body>');
+  w.once('ready-to-show', () => {
+    if (w.isDestroyed()) return;
+    try { w.setShape(ring); } catch {}
+    w.showInactive();
   });
 }
 
@@ -285,12 +329,12 @@ function createSelectionOverlay(transparent) {
 }
 const HUD_FULL = { width: 430, height: 56 };
 const HUD_COMPACT = { width: 150, height: 44 };
-function showHud() {
+function showHud(opts = {}) {
   closeHud();
   const wa = screen.getPrimaryDisplay().workArea;
   hudWin = new BrowserWindow({
     x: Math.round(wa.x + (wa.width - HUD_FULL.width) / 2), y: wa.y + 12, ...HUD_FULL,
-    frame: false, transparent: true, backgroundColor: '#00000000', resizable: false, maximizable: false, minimizable: false,
+    frame: false, transparent: false, backgroundColor: '#191919', resizable: false, maximizable: false, minimizable: false,
     fullscreenable: false, skipTaskbar: true, alwaysOnTop: true, focusable: false, hasShadow: false, show: false,
     webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false }
   });
@@ -299,8 +343,12 @@ function showHud() {
   try { hudWin.setContentProtection(true); } catch (e) { console.warn('Content protection unavailable:', e.message); }
   hudWin.loadFile(path.join(__dirname, 'hud.html'));
   hudWin.webContents.once('did-finish-load', () => {
-    safeHudSend('hud-init', { paused, elapsedMs });
-    if (hudWin && !hudWin.isDestroyed()) hudWin.showInactive();
+    safeHudSend('hud-init', { paused, elapsedMs, starting: !!opts.starting });
+    if (hudWin && !hudWin.isDestroyed()) {
+      hudWin.showInactive();
+      // (re)apply after the native window exists: keeps the bar out of the recording
+      try { hudWin.setContentProtection(true); } catch {}
+    }
   });
   hudWin.on('closed', () => { hudWin = null; });
 }
@@ -480,7 +528,7 @@ async function startSegment() {
   segMetas.push(meta);
 }
 async function pauseCapture() {
-  if (!active || paused || stopPromise) return;
+  if (!active || paused || stopPromise || starting) return;
   const stopAt = Date.now();
   try { await stopFfmpegGracefully(); } catch (e) { console.warn('FFmpeg did not pause cleanly:', e.message); }
   elapsedMs += stopAt - startedAt;
@@ -489,7 +537,7 @@ async function pauseCapture() {
   safeHudSend('hud-status', { paused: true, elapsedMs });
 }
 async function resumeCapture() {
-  if (!active || !paused || stopPromise) return;
+  if (!active || !paused || stopPromise || starting) return;
   try {
     startedAt = Date.now();
     await startSegment();
@@ -522,6 +570,7 @@ function chooseOutputPath(folder, ext, opts) {
   return { output, nextIndex: index };
 }
 async function stopCapture() {
+  if (startingPromise) { try { await startingPromise; } catch {} }
   if (stopPromise) return stopPromise;
   if (!active) return null;
   stopPromise = (async () => {
@@ -537,11 +586,7 @@ async function stopCapture() {
       active = false;
       paused = false;
       closeHud();
-      if (mainWin && !mainWin.isDestroyed()) {
-        mainWin.show();
-        mainWin.restore();
-        mainWin.focus();
-      }
+      showMainWindow();
     }
     const audioWasRunning = audioActive;
     const hasAudio = audioActive ? await stopAudioCapture() : false;
@@ -710,13 +755,13 @@ function finishRegionSelect(result) {
   const done = regionResolver;
   regionResolver = null;
   closeOverlay();
-  if (mainWin && !mainWin.isDestroyed()) { mainWin.restore(); mainWin.show(); mainWin.focus(); }
+  showMainWindow();
   done(result);
 }
 ipcMain.handle('select-region', async () => {
   if (regionResolver) finishRegionSelect({ cancelled: true });
   // Get the app out of the way, freeze the screen, then let the user drag on the frozen image.
-  if (mainWin && !mainWin.isDestroyed() && !mainWin.isMinimized()) { mainWin.minimize(); await sleep(350); }
+  await hideMainWindowForCapture();
   const image = await captureScreenImage();
   closeOverlay();
   overlayWin = createSelectionOverlay(!image);
@@ -746,26 +791,42 @@ ipcMain.handle('start-record', async (_e, opts = {}) => {
   if (recordingOptions.mode === 'window' && !recordingOptions.windowTitle) throw new Error('Select an open application window first.');
   segments = []; segMetas = []; segmentIndex = 0; elapsedMs = 0; startedAt = Date.now(); active = true; paused = false;
   audioActive = false;
-  try {
-    // Open the audio devices and start the video at the same time (alignment is done when saving).
+  starting = true;
+  startingPromise = (async () => {
     const wantAudio = !!(recordingOptions.systemAudio || recordingOptions.micAudio);
-    const audioTask = wantAudio ? startAudioCapture(recordingOptions) : Promise.resolve(false);
+    // Audio devices take 1-3 s to open: start now (or reuse the ones prepared during the countdown) while the app hides.
+    const audioReady = wantAudio ? prepareAudio(recordingOptions) : Promise.resolve(false);
+    showHud({ starting: true });
+    await hideMainWindowForCapture(); // the app window must be gone BEFORE the first video frame
+    const audioOk = (await audioReady) === true;
+    let beginTask = Promise.resolve(false);
+    if (audioOk) {
+      beginTask = beginAudio().then(() => true).catch(e => {
+        logLine('Audio begin failed: ' + e.message);
+        send('recording-error', `Audio could not be started (${e.message}). Recording continues without sound.`);
+        return false;
+      });
+    }
+    startedAt = Date.now();
     try { await startSegment(); }
-    catch (e) { await audioTask.catch(() => {}); await discardAudio(); throw e; }
-    audioActive = (await audioTask) === true;
-    showHud();
+    catch (e) { await beginTask; await discardAudio(); throw e; }
+    audioActive = (await beginTask) === true;
+    if (!audioActive) await discardAudio();
+    safeHudSend('hud-status', { paused: false, elapsedMs: 0 });
     if (recordingOptions.mode === 'region') showRegionFrame(recordingOptions.region);
-    if (mainWin && !mainWin.isDestroyed()) mainWin.minimize();
     send('recording-status-change', { status: 'recording' });
+  })();
+  try {
+    await startingPromise;
     return { ok: true };
   } catch (e) {
     active = false; paused = false;
     closeHud();
     await discardAudio();
-    if (mainWin && !mainWin.isDestroyed()) { mainWin.show(); mainWin.restore(); mainWin.focus(); }
+    showMainWindow();
     if (ffmpeg) { try { ffmpeg.kill(); } catch {} ffmpeg = null; }
     throw e;
-  }
+  } finally { starting = false; startingPromise = null; }
 });
 ipcMain.handle('pause-record', () => pauseCapture());
 ipcMain.handle('resume-record', () => resumeCapture());

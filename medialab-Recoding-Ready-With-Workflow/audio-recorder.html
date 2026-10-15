@@ -16,7 +16,8 @@ function cleanup() {
 }
 const msg = e => (e && e.message) || String(e);
 
-async function startCapture(cfg) {
+// Step 1 (slow, 1-3 s): open the devices and build the audio graph. Nothing is recorded yet.
+async function prepareCapture(cfg) {
   const problems = [];
   try {
     ctx = new AudioContext({ sampleRate: 48000 });
@@ -25,7 +26,8 @@ async function startCapture(cfg) {
     if (cfg.system) {
       try {
         // The main process answers this request with the screen + 'loopback' audio.
-        const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 1 }, audio: true });
+        // Raw system sound: no echo cancellation / noise suppression / auto gain (they make it dull and pumping).
+        const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 1 }, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
         s.getVideoTracks().forEach(t => t.stop()); // only the sound is needed
         if (s.getAudioTracks().length) {
           ctx.createMediaStreamSource(new MediaStream(s.getAudioTracks())).connect(dest);
@@ -46,12 +48,20 @@ async function startCapture(cfg) {
     recorder.ondataavailable = e => {
       if (e.data && e.data.size) pending.push(e.data.arrayBuffer().then(b => ipcRenderer.send('audio-chunk', Buffer.from(b))));
     };
-    const startedAt = await new Promise(resolve => { recorder.onstart = () => resolve(Date.now()); recorder.start(500); });
-    return { ok: true, startedAt, problems };
+    return { ok: true, problems };
   } catch (e) {
     cleanup();
     return { ok: false, problems: [msg(e)] };
   }
+}
+
+// Step 2 (instant): start recording. Returns the wall-clock time of the first audio sample.
+function beginRecording() {
+  return new Promise((resolve, reject) => {
+    if (!recorder) { reject(new Error('audio is not prepared')); return; }
+    recorder.onstart = () => resolve(Date.now());
+    recorder.start(500);
+  });
 }
 
 function stopCapture() {

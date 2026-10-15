@@ -267,6 +267,8 @@ export default function App() {
     if (toggles.countdown3s && !skipCountdown) {
       setRecordingStatus('countdown');
       setCountdownValue(toggles.countdownDuration);
+      // Opening the audio devices takes 1-3 s: do it during the countdown so no sound is lost at the start.
+      void window.electronAPI?.prepareAudio?.({ systemAudio: toggles.systemAudio, micAudio: toggles.micAudio });
       if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
 
       let currentCount = toggles.countdownDuration;
@@ -308,6 +310,7 @@ export default function App() {
         if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
         setRecordingStatus('idle');
         setRecordingSeconds(0);
+        void window.electronAPI?.cancelAudioPrepare?.();
         showToast(t.countdownCancelled);
         return;
       }
