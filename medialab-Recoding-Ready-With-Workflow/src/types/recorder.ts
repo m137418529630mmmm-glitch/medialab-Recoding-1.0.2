@@ -70,3 +70,6 @@ export interface AppWindowState {
   width: number;
   height: number;
 }
+
+/** idle -> (countdown) -> starting -> recording <-> paused -> saving -> idle */
+export type RecordingStatus = 'idle' | 'countdown' | 'starting' | 'recording' | 'paused' | 'saving';

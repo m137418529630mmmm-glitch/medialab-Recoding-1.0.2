@@ -66,6 +66,9 @@ ipcRenderer.on('start-region-select', (_e, data) => {
   reset();
   if (data && data.image) {
     document.body.style.backgroundImage = 'url("' + data.image + '")';
+    // Real pixel size of the display (never stretched to the window: Windows may clamp the window to the work area).
+    document.body.style.backgroundPosition = '0 0';
+    document.body.style.backgroundSize = data.size ? (data.size.width + 'px ' + data.size.height + 'px') : '100% 100%';
     const img = new Image();
     img.onload = img.onerror = () => ipcRenderer.send('overlay-ready');
     img.src = data.image;

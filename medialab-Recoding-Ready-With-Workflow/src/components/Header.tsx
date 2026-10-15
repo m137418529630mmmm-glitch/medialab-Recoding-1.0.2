@@ -1,3 +1,4 @@
+import type { RecordingStatus } from '../types/recorder';
 import React from 'react';
 import {
   Settings as SettingsIcon,
@@ -11,7 +12,7 @@ interface HeaderProps {
   lang: Language;
   setLang: (lang: Language) => void;
   onOpenSettings: () => void;
-  recordingStatus: 'idle' | 'countdown' | 'recording' | 'paused';
+  recordingStatus: RecordingStatus;
   recordingTimer: string;
   onStopRecording: () => void;
   onPauseResumeRecording: () => void;
@@ -68,6 +69,15 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   {t.stopRecording}
                 </button>
+              </div>
+            )}
+
+            {(recordingStatus === 'starting' || recordingStatus === 'saving') && (
+              <div className="flex items-center gap-2 bg-[#FFFFFF] border border-[#D85631] rounded-xl px-3 py-1.5 shadow-sm">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                <span className="text-xs font-bold text-[#1E1D1B]">
+                  {recordingStatus === 'starting' ? t.starting : t.saving}
+                </span>
               </div>
             )}
 

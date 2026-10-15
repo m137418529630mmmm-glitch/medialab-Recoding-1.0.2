@@ -1,3 +1,4 @@
+import type { RecordingStatus } from '../types/recorder';
 import React, { useState } from 'react';
 import {
   Pause,
@@ -20,7 +21,7 @@ import { Language, translations } from '../utils/translations';
 interface LiveRecordingOverlayProps {
   lang: Language;
   isActive: boolean;
-  status: 'idle' | 'countdown' | 'recording' | 'paused';
+  status: RecordingStatus;
   timerFormatted: string;
   secondsElapsed: number;
   countdownValue: number;

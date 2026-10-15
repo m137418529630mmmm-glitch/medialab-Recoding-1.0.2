@@ -55,3 +55,9 @@
 - **Black frame too thick**: Windows has a minimum size for windows, so four thin windows ended up 30+ px thick. It is now ONE window shaped like a hollow 3 px ring, just outside the recorded area.
 - **System sound is captured raw** (echo cancellation / noise suppression / auto gain explicitly off); these processors dull and pump the sound.
 - `tools/sync-test.html`: flashes the screen and beeps together once a second for 20 s. Record it, and the exact audio offset can be measured.
+
+# Round 6
+
+- **Timer vs video length (60 s in the app = 55 s file)**: the app timer started when Start was pressed, but the video only begins after the window hides and the audio devices open (1-5 s). New status "Starting..." until the main process confirms the first frame; the timer is anchored to the main process's exact elapsed time (also re-synced on every pause/resume), so the two now match.
+- **Stop & Save**: the header and the control bar show "Saving..." instead of a running timer; the audio recorder is stopped in parallel with FFmpeg; the phases are written to `medialab.log` ("stop timings") so a slow save can be pinned down.
+- **Region picker showed the taskbar twice** (and could map the selection slightly off): the screenshot was stretched to a window that Windows clamps to the work area. It is now drawn at its real pixel size.

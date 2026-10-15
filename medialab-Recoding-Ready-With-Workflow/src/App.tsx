@@ -21,6 +21,7 @@ import {
   VideoFormat,
   ToggleSettings,
   StorageSettings,
+  RecordingStatus,
 } from './types/recorder';
 import { Language, translations } from './utils/translations';
 import { localDateStamp } from './utils/format';
@@ -51,6 +52,8 @@ export default function App() {
   const tRef = useRef(t);
   tRef.current = t;
   const handleStartRef = useRef<(skipCountdown?: boolean) => void>(() => {});
+  // Elapsed time is anchored to the main process's exact value (no counting of ticks, no drift).
+  const baseRef = useRef({ ms: 0, at: Date.now() });
   const toastTimerRef = useRef<any>(null);
 
   // Settings Modal state
@@ -191,7 +194,13 @@ export default function App() {
         if (event.status === 'idle') {
           setRecordingStatus('idle');
           setRecordingSeconds(0);
+        } else if (event.status === 'saving') {
+          setRecordingStatus('saving');
         } else if (event.status === 'recording' || event.status === 'paused') {
+          if (typeof event.elapsedMs === 'number') {
+            baseRef.current = { ms: event.elapsedMs, at: Date.now() };
+            setRecordingSeconds(Math.floor(event.elapsedMs / 1000));
+          }
           setRecordingStatus(event.status);
         }
       }
@@ -209,9 +218,7 @@ export default function App() {
   const [isRegionPickerOpen, setIsRegionPickerOpen] = useState(false);
 
   // Live Recording state
-  const [recordingStatus, setRecordingStatus] = useState<
-    'idle' | 'countdown' | 'recording' | 'paused'
-  >('idle');
+  const [recordingStatus, setRecordingStatus] = useState<RecordingStatus>('idle');
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [countdownValue, setCountdownValue] = useState(3);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -261,6 +268,19 @@ export default function App() {
     }
   };
 
+  // Electron: 'starting' until the main process says the video really started (the timer must not
+  // count the 1-3 s of start-up). Browser preview has no native recorder, so it starts immediately.
+  const beginRecordingFlow = () => {
+    setRecordingSeconds(0);
+    baseRef.current = { ms: 0, at: Date.now() };
+    if (window.electronAPI) {
+      setRecordingStatus('starting');
+      void startNativeRecording();
+    } else {
+      setRecordingStatus('recording');
+    }
+  };
+
   const handleStartRecording = (skipCountdown = false) => {
     if (recordingStatus !== 'idle') return;
 
@@ -276,25 +296,23 @@ export default function App() {
         currentCount -= 1;
         if (currentCount <= 0) {
           clearInterval(countdownTimerRef.current);
-          setRecordingStatus('recording');
-          setRecordingSeconds(0);
-          void startNativeRecording();
+          beginRecordingFlow();
         } else {
           setCountdownValue(currentCount);
         }
       }, 1000);
     } else {
-      setRecordingStatus('recording');
-      setRecordingSeconds(0);
-      void startNativeRecording();
+      beginRecordingFlow();
     }
   };
 
   const handlePauseResume = () => {
     if (recordingStatus === 'recording') {
+      baseRef.current = { ms: recordingSeconds * 1000, at: Date.now() };
       setRecordingStatus('paused');
       void window.electronAPI?.pauseRecord();
     } else if (recordingStatus === 'paused') {
+      baseRef.current = { ms: recordingSeconds * 1000, at: Date.now() };
       setRecordingStatus('recording');
       void window.electronAPI?.resumeRecord();
     }
@@ -303,7 +321,7 @@ export default function App() {
   const stopInProgressRef = useRef<Promise<any> | null>(null);
 
   const handleStopAndSave = async () => {
-    if (stopInProgressRef.current) return stopInProgressRef.current;
+    if (stopInProgressRef.current || recordingStatus === 'saving') return stopInProgressRef.current;
     const stopTask = (async () => {
       // Stop pressed during the countdown = cancel (nothing has been recorded yet).
       if (recordingStatus === 'countdown') {
@@ -362,8 +380,9 @@ export default function App() {
   useEffect(() => {
     if (recordingStatus !== 'recording') return;
     recordIntervalRef.current = setInterval(() => {
-      setRecordingSeconds((prev) => prev + 1);
-    }, 1000);
+      const b = baseRef.current;
+      setRecordingSeconds(Math.floor((b.ms + (Date.now() - b.at)) / 1000));
+    }, 250);
     return () => {
       if (recordIntervalRef.current) clearInterval(recordIntervalRef.current);
     };

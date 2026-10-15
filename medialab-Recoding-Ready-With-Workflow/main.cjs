@@ -323,6 +323,7 @@ function createSelectionOverlay(transparent) {
     webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false }
   });
   win.setAlwaysOnTop(true, 'screen-saver');
+  try { win.setBounds({ x: b.x, y: b.y, width: b.width, height: b.height }); } catch {}
   win.loadFile(path.join(__dirname, 'overlay.html'));
   win.on('closed', () => { if (overlayWin === win) overlayWin = null; });
   return win;
@@ -533,7 +534,7 @@ async function pauseCapture() {
   try { await stopFfmpegGracefully(); } catch (e) { console.warn('FFmpeg did not pause cleanly:', e.message); }
   elapsedMs += stopAt - startedAt;
   paused = true;
-  send('recording-status-change', { status: 'paused' });
+  send('recording-status-change', { status: 'paused', elapsedMs });
   safeHudSend('hud-status', { paused: true, elapsedMs });
 }
 async function resumeCapture() {
@@ -544,11 +545,11 @@ async function resumeCapture() {
     paused = false;
   } catch (e) {
     send('recording-error', e.message);
-    send('recording-status-change', { status: 'paused' });
+    send('recording-status-change', { status: 'paused', elapsedMs });
     safeHudSend('hud-status', { paused: true, elapsedMs });
     return;
   }
-  send('recording-status-change', { status: 'recording' });
+  send('recording-status-change', { status: 'recording', elapsedMs });
   safeHudSend('hud-status', { paused: false, elapsedMs });
 }
 function localDateStamp(d = new Date()) {
@@ -574,6 +575,13 @@ async function stopCapture() {
   if (stopPromise) return stopPromise;
   if (!active) return null;
   stopPromise = (async () => {
+    const t0 = Date.now();
+    const timings = {};
+    send('recording-status-change', { status: 'saving' });
+    safeHudSend('hud-status', { paused: true, elapsedMs, saving: true });
+    // Stop the audio recorder at the same time as FFmpeg (saves about a second).
+    const audioWasRunning = audioActive;
+    const audioStop = audioWasRunning ? stopAudioCapture() : Promise.resolve(false);
     try {
       if (!paused && ffmpeg) {
         const stopAt = Date.now();
@@ -581,6 +589,7 @@ async function stopCapture() {
         try { await stopFfmpegGracefully(); } catch (e) { console.warn('FFmpeg did not stop cleanly:', e.message); }
         elapsedMs += stopAt - startedAt;
       }
+      timings.ffmpegStop = Date.now() - t0;
     } finally {
       // Always leave the "recording" state, even if something above failed.
       active = false;
@@ -588,8 +597,8 @@ async function stopCapture() {
       closeHud();
       showMainWindow();
     }
-    const audioWasRunning = audioActive;
-    const hasAudio = audioActive ? await stopAudioCapture() : false;
+    const hasAudio = await audioStop;
+    timings.audioStop = Date.now() - t0;
     const validMetas = segMetas.filter(m => fs.existsSync(m.path) && fs.statSync(m.path).size > 2048);
     const valid = validMetas.map(m => m.path);
     if (!valid.length) throw new Error('No valid video segment was created. Check FFmpeg and capture permissions.');
@@ -610,13 +619,12 @@ async function stopCapture() {
         const container = ext === 'mkv' ? [] : ['-movflags', '+faststart'];
         if (hasAudio) {
           try {
-            const items = [];
-            for (const m of validMetas) {
+            const items = await Promise.all(validMetas.map(async (m) => {
               const first = m.firstFrameAt || (m.spawnedAt + 450);
               let dur = await getMediaDuration(m.path);
               if (!dur) dur = Math.max(0.1, ((m.endedAt || Date.now()) - first) / 1000);
-              items.push({ start: (first - audioStartedAt) / 1000, dur });
-            }
+              return { start: (first - audioStartedAt) / 1000, dur };
+            }));
             logLine('audio alignment (seconds, audio start relative to each video segment): ' + JSON.stringify(items));
             // Video is stream-copied; only the audio is encoded (AAC, best compatibility with editors).
             await runFfmpeg([
@@ -627,6 +635,7 @@ async function stopCapture() {
               '-y', output
             ], 'Merging audio');
             audioMerged = true;
+            timings.merge = Date.now() - t0;
           } catch (e) {
             logLine('Audio merge failed: ' + e.message);
             send('recording-error', `Audio could not be merged, saved without sound. (raw audio kept in: ${tempRoot})`);
@@ -643,6 +652,8 @@ async function stopCapture() {
       }
       if (!fs.existsSync(output) || fs.statSync(output).size < 2048) throw new Error('The output video is empty or incomplete.');
       if (!hasAudio || audioMerged) { try { fs.rmSync(tempRoot, { recursive: true, force: true }); } catch {} }
+      timings.total = Date.now() - t0;
+      logLine('stop timings (ms since Stop was pressed): ' + JSON.stringify(timings));
       const result = { path: output, fileName: path.basename(output), durationSeconds: Math.max(1, Math.round(elapsedMs / 1000)), currentIndex: nextIndex };
       send('recording-saved', result);
       send('recording-status-change', { status: 'idle' });
@@ -770,7 +781,7 @@ ipcMain.handle('select-region', async () => {
   if (win.isDestroyed()) return { cancelled: true };
   const b = screen.getPrimaryDisplay().bounds;
   const ready = waitForIpc('overlay-ready', 2500);
-  safeOverlaySend('start-region-select', { image, origin: { x: b.x, y: b.y } });
+  safeOverlaySend('start-region-select', { image, origin: { x: b.x, y: b.y }, size: { width: b.width, height: b.height } });
   await ready;
   if (win.isDestroyed()) return { cancelled: true };
   win.show(); win.focus();
@@ -814,7 +825,7 @@ ipcMain.handle('start-record', async (_e, opts = {}) => {
     if (!audioActive) await discardAudio();
     safeHudSend('hud-status', { paused: false, elapsedMs: 0 });
     if (recordingOptions.mode === 'region') showRegionFrame(recordingOptions.region);
-    send('recording-status-change', { status: 'recording' });
+    send('recording-status-change', { status: 'recording', elapsedMs: 0 });
   })();
   try {
     await startingPromise;
